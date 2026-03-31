@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Cleaner para IA</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --card: #ffffff;
+      --text: #222222;
+      --text-muted: #666666;
+      --text-faint: #999999;
+      --border: #e5e7eb;
+      --border-light: #eeeeee;
+      --input-border: #dddddd;
+      --header-bg: #1a1a2e;
+      --header-text: #ffffff;
+      --btn-primary-bg: #1a1a2e;
+      --btn-primary-text: #ffffff;
+      --btn-primary-hover: #16213e;
+      --btn-secondary-bg: #eeeeee;
+      --btn-secondary-text: #333333;
+      --btn-secondary-hover: #dddddd;
+      --stat-bg: #f9fafb;
+      --stat-value: #1a1a2e;
+      --stat-green: #16a34a;
+      --stat-purple: #7c3aed;
+      --progress-track: #eeeeee;
+      --progress-fill: #1a1a2e;
+      --drop-color: #888888;
+      --drop-has-file-border: #16a34a;
+      --drop-has-file-bg: #f0fdf4;
+      --drop-has-file-text: #15803d;
+      --error-bg: #fef2f2;
+      --error-border: #fecaca;
+      --error-title: #dc2626;
+      --error-text: #b91c1c;
+      --badge-done-bg: #dcfce7; --badge-done-text: #16a34a;
+      --badge-error-bg: #fee2e2; --badge-error-text: #dc2626;
+      --badge-proc-bg: #dbeafe; --badge-proc-text: #2563eb;
+      --badge-queue-bg: #f3f4f6; --badge-queue-text: #6b7280;
+      --col-ai-border: #c4b5fd; --col-ai-bg: #faf5ff;
+      --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    [data-theme="dark"] {
+      --bg: #0f0f1a;
+      --card: #1c1c2e;
+      --text: #e8e8f0;
+      --text-muted: #a0a0b8;
+      --text-faint: #606080;
+      --border: #2e2e4e;
+      --border-light: #252540;
+      --input-border: #3a3a5c;
+      --header-bg: #0a0a18;
+      --header-text: #e8e8f0;
+      --btn-primary-bg: #4f46e5;
+      --btn-primary-text: #ffffff;
+      --btn-primary-hover: #4338ca;
+      --btn-secondary-bg: #2a2a3e;
+      --btn-secondary-text: #c8c8e0;
+      --btn-secondary-hover: #353550;
+      --stat-bg: #252540;
+      --stat-value: #e8e8f0;
+      --stat-green: #4ade80;
+      --stat-purple: #a78bfa;
+      --progress-track: #2a2a3e;
+      --progress-fill: #4f46e5;
+      --drop-color: #606080;
+      --drop-has-file-border: #4ade80;
+      --drop-has-file-bg: #0f2a1a;
+      --drop-has-file-text: #4ade80;
+      --error-bg: #2a0a0a;
+      --error-border: #7f1d1d;
+      --error-title: #f87171;
+      --error-text: #fca5a5;
+      --badge-done-bg: #14532d; --badge-done-text: #4ade80;
+      --badge-error-bg: #450a0a; --badge-error-text: #f87171;
+      --badge-proc-bg: #1e3a5f; --badge-proc-text: #60a5fa;
+      --badge-queue-bg: #252535; --badge-queue-text: #9ca3af;
+      --col-ai-border: #7c3aed; --col-ai-bg: #1a0a2e;
+      --shadow: 0 2px 12px rgba(0,0,0,0.4);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; transition: background 0.2s, color 0.2s; }
+    header { background: var(--header-bg); color: var(--header-text); padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header span { font-size: 0.85rem; opacity: 0.7; }
+    .header-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
+    #theme-btn {
+      background: none; border: 1px solid rgba(255,255,255,0.3); color: var(--header-text);
+      padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    }
+    #theme-btn:hover { background: rgba(255,255,255,0.1); }
+    #logout-btn { font-size: 0.8rem; background: none; border: 1px solid rgba(255,255,255,0.3); color: var(--header-text); padding: 0.3rem 0.75rem; border-radius: 4px; cursor: pointer; }
+    #logout-btn:hover { background: rgba(255,255,255,0.1); }
+
+    .container { max-width: 920px; margin: 2rem auto; padding: 0 1rem; }
+    section.card { background: var(--card); border-radius: 10px; padding: 2rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; border: 1px solid var(--border); }
+    section.card h2 { margin-bottom: 1rem; font-size: 1.1rem; }
+
+    /* Auth */
+    .form-group { margin-bottom: 0.75rem; }
+    .form-group label { display: block; font-size: 0.85rem; margin-bottom: 0.3rem; color: var(--text-muted); }
+    .form-group input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--input-border); border-radius: 6px; font-size: 0.95rem; background: var(--card); color: var(--text); }
+    .form-group input:focus { outline: none; border-color: var(--btn-primary-bg); }
+    .btn { padding: 0.6rem 1.25rem; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-weight: 500; transition: background 0.15s; }
+    .btn-primary { background: var(--btn-primary-bg); color: var(--btn-primary-text); }
+    .btn-primary:hover { background: var(--btn-primary-hover); }
+    .btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); }
+    .btn-secondary:hover { background: var(--btn-secondary-hover); }
+    .btn-success { background: #16a34a; color: #fff; }
+    .btn-success:hover { background: #15803d; }
+    .btn-purple { background: #7c3aed; color: #fff; }
+    .btn-purple:hover { background: #6d28d9; }
+    .auth-row { display: flex; gap: 0.75rem; margin-top: 1rem; align-items: center; }
+    #auth-status { font-size: 0.85rem; color: var(--stat-green); }
+    #auth-error { font-size: 0.85rem; color: var(--error-title); }
+
+    /* Upload */
+    #drop-zone {
+      border: 2px dashed var(--border); border-radius: 8px; padding: 2.5rem;
+      text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+      color: var(--drop-color);
+    }
+    #drop-zone.dragover { border-color: var(--btn-primary-bg); background: rgba(79,70,229,0.05); }
+    #drop-zone.has-file { border-color: var(--drop-has-file-border); background: var(--drop-has-file-bg); color: var(--drop-has-file-text); }
+    #drop-zone input[type=file] { display: none; }
+    #file-name { margin-top: 0.75rem; font-size: 0.9rem; color: var(--text-muted); }
+
+    /* Progress */
+    #progress-bar-container { background: var(--progress-track); border-radius: 999px; height: 12px; overflow: hidden; margin-bottom: 0.5rem; }
+    #progress-bar { height: 100%; background: var(--progress-fill); width: 0%; transition: width 0.6s ease; border-radius: 999px; }
+    #progress-bar.llm-mode { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+    #progress-pct { font-size: 0.8rem; color: var(--text-faint); text-align: right; margin-bottom: 0.4rem; }
+    #progress-msg { font-size: 0.9rem; color: var(--text-muted); }
+
+    /* Stats */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .stat-card { background: var(--stat-bg); border-radius: 8px; padding: 1rem; text-align: center; }
+    .stat-card .value { font-size: 1.5rem; font-weight: 700; color: var(--stat-value); }
+    .stat-card .label { font-size: 0.75rem; color: var(--text-faint); margin-top: 0.25rem; }
+    .stat-card.highlight .value { color: var(--stat-green); }
+    .stat-card.highlight-ai .value { color: var(--stat-purple); }
+
+    /* Download columns */
+    .download-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.25rem; }
+    .download-col { flex: 1; min-width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+    .download-col h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text); }
+    .download-col p { font-size: 0.8rem; color: var(--text-faint); margin-bottom: 0.85rem; }
+    .download-col.col-ai { border-color: var(--col-ai-border); background: var(--col-ai-bg); }
+    .download-col.col-ai h3 { color: var(--stat-purple); }
+    #download-simple { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 0.25rem; }
+
+    /* Error */
+    #error-section { background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; display: none; }
+    #error-section h2 { color: var(--error-title); margin-bottom: 0.5rem; font-size: 1rem; }
+    #error-msg { font-size: 0.9rem; color: var(--error-text); }
+
+    /* History */
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { color: var(--text-faint); font-weight: 600; padding: 0.6rem 0.75rem; text-align: left; border-bottom: 2px solid var(--border); background: var(--stat-bg); }
+    td { padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border-light); }
+    tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .badge-done { background: var(--badge-done-bg); color: var(--badge-done-text); }
+    .badge-error { background: var(--badge-error-bg); color: var(--badge-error-text); }
+    .badge-processing { background: var(--badge-proc-bg); color: var(--badge-proc-text); }
+    .badge-queued { background: var(--badge-queue-bg); color: var(--badge-queue-text); }
+    a.dl-link { color: #2563eb; text-decoration: none; font-size: 0.8rem; }
+    a.dl-link:hover { text-decoration: underline; }
+    a.dl-link.ai { color: #7c3aed; }
+    .tbl-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>PDF Cleaner para IA</h1>
+  <span>Converta PDFs em Markdown otimizado</span>
+  <div class="header-actions">
+    <button id="theme-btn" onclick="toggleTheme()">🌙 Escuro</button>
+    <button id="logout-btn" style="display:none" onclick="logout()">Sair</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Auth -->
+  <section class="card" id="auth-section">
+    <h2>Entrar</h2>
+    <div class="form-group">
+      <label>E-mail</label>
+      <input type="email" id="email" placeholder="seu@email.com" />
+    </div>
+    <div class="form-group">
+      <label>Senha</label>
+      <input type="password" id="password" placeholder="••••••••" />
+    </div>
+    <div class="auth-row">
+      <button class="btn btn-primary" onclick="login()">Entrar</button>
+      <button class="btn btn-secondary" onclick="register()">Criar conta</button>
+      <span id="auth-status"></span>
+      <span id="auth-error"></span>
+    </div>
+  </section>
+
+  <!-- Upload -->
+  <section class="card" id="upload-section" style="display:none">
+    <h2>Enviar PDF</h2>
+    <div id="drop-zone" onclick="document.getElementById('file-input').click()"
+         ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <input type="file" id="file-input" accept=".pdf" onchange="onFileSelected(event)" />
+      <div id="drop-text">Arraste um PDF aqui ou clique para selecionar</div>
+      <div style="font-size:0.8rem;margin-top:0.4rem;color:var(--text-faint)">Máximo 200 MB · até 1000 páginas</div>
+    </div>
+    <div id="file-name"></div>
+    <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <button id="process-btn" class="btn btn-primary" onclick="processFile()" disabled>Processar PDF</button>
+      <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;cursor:pointer;user-select:none;color:var(--text)">
+        <input type="checkbox" id="use-llm-toggle" style="width:1rem;height:1rem;cursor:pointer" />
+        Refinar com IA <span style="font-size:0.75rem;color:var(--text-faint)">(GPT-4.1-mini)</span>
+      </label>
+      <span id="upload-error" style="font-size:0.85rem;color:var(--error-title)"></span>
+    </div>
+  </section>
+
+  <!-- Progress -->
+  <section class="card" id="progress-section" style="display:none">
+    <h2 id="progress-title">Processando...</h2>
+    <div id="progress-bar-container"><div id="progress-bar"></div></div>
+    <div id="progress-pct">0%</div>
+    <div id="progress-msg">Aguardando...</div>
+  </section>
+
+  <!-- Error -->
+  <div id="error-section">
+    <h2>Erro no processamento</h2>
+    <p id="error-msg"></p>
+    <button class="btn btn-secondary" style="margin-top:1rem" onclick="resetUpload()">Tentar novamente</button>
+  </div>
+
+  <!-- Result -->
+  <section class="card" id="result-section" style="display:none">
+    <h2 style="color:var(--stat-green)">Processamento concluído!</h2>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="value" id="stat-tokens-orig">—</div><div class="label">Tokens originais</div></div>
+      <div class="stat-card"><div class="value" id="stat-tokens-out">—</div><div class="label">Tokens no Markdown</div></div>
+      <div class="stat-card highlight" id="stat-red-local-card"><div class="value" id="stat-reduction-local">—</div><div class="label" id="stat-reduction-local-label">Redução de tokens</div></div>
+      <div class="stat-card highlight-ai" id="stat-red-ai-card" style="display:none"><div class="value" id="stat-reduction-ai">—</div><div class="label">Redução com IA</div></div>
+      <div class="stat-card"><div class="value" id="stat-pages">—</div><div class="label">Páginas processadas</div></div>
+      <div class="stat-card"><div class="value" id="stat-ocr">—</div><div class="label">Páginas com OCR</div></div>
+      <div class="stat-card" id="stat-pdf-size-card" style="display:none"><div class="value" id="stat-pdf-size">—</div><div class="label">Tamanho do PDF</div></div>
+      <div class="stat-card" id="stat-md-size-card" style="display:none"><div class="value" id="stat-md-size">—</div><div class="label">Tamanho do Markdown</div></div>
+      <div class="stat-card" id="stat-llm-card" style="display:none;border-left:3px solid var(--stat-purple)"><div class="value" id="stat-llm-tokens" style="color:var(--stat-purple)">—</div><div class="label">Tokens IA usados</div></div>
+    </div>
+
+    <!-- Dois botões (com IA) -->
+    <div id="download-two-col" class="download-row" style="display:none">
+      <div class="download-col">
+        <h3>MD Local</h3>
+        <p>Extração direta do PDF, sem IA</p>
+        <button class="btn btn-secondary" onclick="downloadRawFile()">Baixar MD Local</button>
+      </div>
+      <div class="download-col col-ai">
+        <h3>MD com IA</h3>
+        <p>Refinado pelo GPT-4.1-mini</p>
+        <button class="btn btn-purple" onclick="downloadFile()">Baixar MD com IA</button>
+      </div>
+    </div>
+
+    <!-- Botão único (sem IA) -->
+    <div id="download-simple">
+      <button class="btn btn-success" onclick="downloadFile()">Baixar Markdown</button>
+      <button class="btn btn-secondary" onclick="resetUpload()">Processar outro PDF</button>
+    </div>
+    <div id="download-reset-ai" style="display:none;margin-top:0.75rem">
+      <button class="btn btn-secondary" onclick="resetUpload()">Processar outro PDF</button>
+    </div>
+  </section>
+
+  <!-- History -->
+  <section class="card" id="history-section" style="display:none">
+    <h2>Histórico</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Arquivo</th>
+            <th>Status</th>
+            <th>Redução local</th>
+            <th>Redução com IA</th>
+            <th>Data</th>
+            <th>MD Local</th>
+            <th>MD com IA</th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('token');
+let selectedFile = null;
+let currentJobId = null;
+let wsConn = null;
+let jobFinished = false;
+let llmProgressTimer = null;
+let llmProgressPct = 75;
+
+// Wrapper para fetch autenticado — desloga automaticamente se o token expirou (401)
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${token}`, ...(options.headers || {}) },
+  });
+  if (res.status === 401) {
+    token = null;
+    localStorage.removeItem('token');
+    location.reload();
+    return res;
+  }
+  return res;
+}
+
+// ── Tema ──────────────────────────────────────────────────────────────────────
+const savedTheme = localStorage.getItem('theme') || 'light';
+applyTheme(savedTheme);
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-btn');
+  if (btn) btn.textContent = theme === 'dark' ? '☀️ Claro' : '🌙 Escuro';
+  localStorage.setItem('theme', theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.onload = () => {
+  if (token) showLoggedIn();
+};
+
+function showLoggedIn() {
+  document.getElementById('auth-section').style.display = 'none';
+  document.getElementById('upload-section').style.display = 'block';
+  document.getElementById('logout-btn').style.display = 'block';
+  loadHistory();
+}
+
+function logout() {
+  token = null;
+  localStorage.removeItem('token');
+  location.reload();
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function login() {
+  clearAuthMessages();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  try {
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(parseDetail(data.detail) || 'Erro ao entrar');
+    token = data.access_token;
+    localStorage.setItem('token', token);
+    showLoggedIn();
+  } catch (e) {
+    document.getElementById('auth-error').textContent = e.message;
+  }
+}
+
+async function register() {
+  clearAuthMessages();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  try {
+    const res = await fetch(`${API}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(parseDetail(data.detail) || 'Erro ao criar conta');
+    token = data.access_token;
+    localStorage.setItem('token', token);
+    document.getElementById('auth-status').textContent = 'Conta criada!';
+    showLoggedIn();
+  } catch (e) {
+    document.getElementById('auth-error').textContent = e.message;
+  }
+}
+
+function clearAuthMessages() {
+  document.getElementById('auth-status').textContent = '';
+  document.getElementById('auth-error').textContent = '';
+}
+
+function parseDetail(detail) {
+  if (!detail) return null;
+  if (Array.isArray(detail)) return detail.map(e => e.msg || JSON.stringify(e)).join('; ');
+  if (typeof detail === 'object') return JSON.stringify(detail);
+  return String(detail);
+}
+
+// ── Upload ────────────────────────────────────────────────────────────────────
+function onDragOver(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.add('dragover');
+}
+function onDragLeave() {
+  document.getElementById('drop-zone').classList.remove('dragover');
+}
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+}
+function onFileSelected(e) { setFile(e.target.files[0]); }
+
+function setFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    document.getElementById('upload-error').textContent = 'Apenas arquivos .pdf são aceitos.';
+    return;
+  }
+  document.getElementById('upload-error').textContent = '';
+  selectedFile = file;
+  document.getElementById('drop-zone').classList.add('has-file');
+  document.getElementById('drop-text').textContent = file.name;
+  document.getElementById('file-name').textContent =
+    `Tamanho: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+  document.getElementById('process-btn').disabled = false;
+}
+
+async function processFile() {
+  if (!selectedFile) return;
+  document.getElementById('upload-error').textContent = '';
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  formData.append('use_llm', document.getElementById('use-llm-toggle').checked ? 'true' : 'false');
+
+  try {
+    const res = await apiFetch(`${API}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(parseDetail(data.detail) || 'Erro ao enviar arquivo');
+
+    currentJobId = data.job_id;
+    document.getElementById('upload-section').style.display = 'none';
+    showProgress();
+    connectWebSocket(currentJobId);
+  } catch (e) {
+    document.getElementById('upload-error').textContent = e.message;
+  }
+}
+
+// ── Progresso ─────────────────────────────────────────────────────────────────
+const STATUS_PROGRESS = {
+  queued: 5, ocr: 30, extracting: 70, llm_refining: 75, done: 100, error: 0,
+};
+
+function showProgress() {
+  jobFinished = false;
+  document.getElementById('progress-section').style.display = 'block';
+  setProgress(5, 'Job na fila...');
+}
+
+function setProgress(pct, msg) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent = Math.round(pct) + '%';
+  document.getElementById('progress-msg').textContent = msg;
+}
+
+function startLlmProgress(startPct) {
+  stopLlmProgress();
+  llmProgressPct = startPct || 75;
+  document.getElementById('progress-bar').classList.add('llm-mode');
+  document.getElementById('progress-title').textContent = 'Refinando com IA...';
+  setProgress(llmProgressPct, 'GPT-4.1-mini processando o documento...');
+  llmProgressTimer = setInterval(() => {
+    if (llmProgressPct < 95) {
+      llmProgressPct += 0.25;
+      setProgress(llmProgressPct, `GPT-4.1-mini processando... ${llmProgressPct.toFixed(0)}%`);
+    }
+  }, 3000);
+}
+
+function stopLlmProgress() {
+  if (llmProgressTimer) { clearInterval(llmProgressTimer); llmProgressTimer = null; }
+  document.getElementById('progress-bar').classList.remove('llm-mode');
+  document.getElementById('progress-title').textContent = 'Processando...';
+}
+
+function connectWebSocket(jobId) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  wsConn = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+
+  let fallbackTimer = setTimeout(() => { if (!jobFinished) pollJobStatus(jobId); }, 30000);
+
+  wsConn.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'heartbeat') return;
+
+    if (data.status === 'llm_refining') {
+      clearTimeout(fallbackTimer);
+      startLlmProgress(75);
+      fallbackTimer = setTimeout(() => { if (!jobFinished) pollJobStatus(jobId); }, 300000);
+      return;
+    }
+
+    stopLlmProgress();
+    const pct = STATUS_PROGRESS[data.status] || 10;
+    setProgress(pct, data.message || data.status);
+
+    if (data.status === 'done') {
+      jobFinished = true;
+      clearTimeout(fallbackTimer);
+      document.getElementById('progress-section').style.display = 'none';
+      showResult(data);
+      loadHistory();
+    } else if (data.status === 'error') {
+      jobFinished = true;
+      clearTimeout(fallbackTimer);
+      document.getElementById('progress-section').style.display = 'none';
+      showError(data.message);
+    } else {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(() => { if (!jobFinished) pollJobStatus(jobId); }, 30000);
+    }
+  };
+
+  wsConn.onerror = () => { clearTimeout(fallbackTimer); stopLlmProgress(); if (!jobFinished) pollJobStatus(jobId); };
+  wsConn.onclose = () => {
+    clearTimeout(fallbackTimer);
+    if (!jobFinished) {
+      if (!llmProgressTimer) stopLlmProgress();
+      pollJobStatus(jobId);
+    }
+  };
+}
+
+function pollJobStatus(jobId) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await apiFetch(`${API}/jobs/${jobId}`);
+      const job = await res.json();
+
+      if (job.status === 'llm_refining') {
+        if (!llmProgressTimer) startLlmProgress(llmProgressPct || 75);
+        return;
+      }
+      if (job.status === 'done') {
+        clearInterval(interval); stopLlmProgress();
+        document.getElementById('progress-section').style.display = 'none';
+        showResult(job); loadHistory();
+      } else if (job.status === 'error') {
+        clearInterval(interval); stopLlmProgress();
+        document.getElementById('progress-section').style.display = 'none';
+        showError(job.error_message);
+      } else {
+        setProgress(STATUS_PROGRESS[job.status] || 10, `Status: ${statusPt(job.status)}`);
+      }
+    } catch (e) { /* ignorar */ }
+  }, 2000);
+}
+
+// ── Resultado ─────────────────────────────────────────────────────────────────
+function showResult(data) {
+  document.getElementById('stat-tokens-orig').textContent = fmt(data.tokens_original);
+  document.getElementById('stat-tokens-out').textContent = fmt(data.tokens_output);
+
+  const hasRaw = data.has_raw_md === true || !!data.raw_output_path;
+  const tokOrig = data.tokens_original || 1;
+
+  if (hasRaw && data.tokens_raw_output != null) {
+    // Mostrar redução local e redução com IA separadamente
+    const rawPct = ((1 - data.tokens_raw_output / tokOrig) * 100).toFixed(1);
+    document.getElementById('stat-reduction-local').textContent = rawPct + '%';
+    document.getElementById('stat-reduction-local-label').textContent = 'Redução local';
+    document.getElementById('stat-reduction-ai').textContent =
+      data.reduction_pct != null ? data.reduction_pct.toFixed(1) + '%' : '—';
+    document.getElementById('stat-red-ai-card').style.display = '';
+  } else {
+    document.getElementById('stat-reduction-local').textContent =
+      data.reduction_pct != null ? data.reduction_pct.toFixed(1) + '%' : '—';
+    document.getElementById('stat-reduction-local-label').textContent = 'Redução de tokens';
+    document.getElementById('stat-red-ai-card').style.display = 'none';
+  }
+
+  document.getElementById('stat-pages').textContent = fmt(data.pages_total);
+  document.getElementById('stat-ocr').textContent = fmt(data.pages_ocr);
+
+  if (data.original_file_size != null) {
+    document.getElementById('stat-pdf-size').textContent = fmtBytes(data.original_file_size);
+    document.getElementById('stat-pdf-size-card').style.display = '';
+  }
+  if (data.output_file_size != null) {
+    document.getElementById('stat-md-size').textContent = fmtBytes(data.output_file_size);
+    document.getElementById('stat-md-size-card').style.display = '';
+  }
+  if (data.llm_tokens_used != null) {
+    document.getElementById('stat-llm-tokens').textContent = fmt(data.llm_tokens_used);
+    document.getElementById('stat-llm-card').style.display = '';
+  }
+
+  if (hasRaw) {
+    document.getElementById('download-two-col').style.display = 'flex';
+    document.getElementById('download-simple').style.display = 'none';
+    document.getElementById('download-reset-ai').style.display = 'block';
+  } else {
+    document.getElementById('download-two-col').style.display = 'none';
+    document.getElementById('download-simple').style.display = 'flex';
+    document.getElementById('download-reset-ai').style.display = 'none';
+  }
+
+  document.getElementById('result-section').style.display = 'block';
+}
+
+function fmt(v) { return v != null ? v.toLocaleString('pt-BR') : '0'; }
+
+function fmtBytes(bytes) {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(2) + ' MB';
+}
+
+function downloadFile() {
+  if (!currentJobId) return;
+  fetchAndSave(`${API}/jobs/${currentJobId}/download`, 'documento.md');
+}
+function downloadRawFile() {
+  if (!currentJobId) return;
+  fetchAndSave(`${API}/jobs/${currentJobId}/download/raw`, 'documento_local.md');
+}
+function fetchAndSave(url, fallback) {
+  apiFetch(url)
+    .then(r => {
+      const disp = r.headers.get('content-disposition') || '';
+      const m = disp.match(/filename="?([^"]+)"?/);
+      return r.blob().then(b => ({ blob: b, filename: m ? m[1] : fallback }));
+    })
+    .then(({ blob, filename }) => {
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = u; a.download = filename; a.click();
+      URL.revokeObjectURL(u);
+    });
+}
+
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('error-section').style.display = 'block';
+}
+
+function resetUpload() {
+  selectedFile = null; currentJobId = null;
+  stopLlmProgress();
+  document.getElementById('drop-zone').classList.remove('has-file');
+  document.getElementById('drop-text').textContent = 'Arraste um PDF aqui ou clique para selecionar';
+  document.getElementById('file-name').textContent = '';
+  document.getElementById('process-btn').disabled = true;
+  document.getElementById('result-section').style.display = 'none';
+  document.getElementById('error-section').style.display = 'none';
+  document.getElementById('progress-section').style.display = 'none';
+  document.getElementById('upload-section').style.display = 'block';
+  document.getElementById('file-input').value = '';
+  document.getElementById('use-llm-toggle').checked = false;
+  document.getElementById('stat-llm-card').style.display = 'none';
+  document.getElementById('stat-pdf-size-card').style.display = 'none';
+  document.getElementById('stat-md-size-card').style.display = 'none';
+  document.getElementById('stat-red-ai-card').style.display = 'none';
+  document.getElementById('download-two-col').style.display = 'none';
+  document.getElementById('download-reset-ai').style.display = 'none';
+  document.getElementById('download-simple').style.display = 'flex';
+}
+
+// ── Histórico ─────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res = await apiFetch(`${API}/jobs`);
+    const jobs = await res.json();
+    if (!Array.isArray(jobs) || jobs.length === 0) return;
+
+    document.getElementById('history-section').style.display = 'block';
+    const tbody = document.getElementById('history-body');
+    tbody.innerHTML = jobs.map(job => {
+      const badge = badgeHtml(job.status);
+      const date = new Date(job.created_at).toLocaleString('pt-BR');
+      const tokOrig = job.tokens_original || 1;
+
+      // Redução local
+      let redLocal = '—';
+      if (job.tokens_raw_output != null && job.tokens_original) {
+        redLocal = ((1 - job.tokens_raw_output / tokOrig) * 100).toFixed(1) + '%';
+      } else if (!job.raw_output_path && job.reduction_pct != null) {
+        redLocal = job.reduction_pct.toFixed(1) + '%';
+      }
+
+      // Redução com IA
+      let redAI = '—';
+      if (job.raw_output_path && job.reduction_pct != null) {
+        redAI = job.reduction_pct.toFixed(1) + '%';
+      }
+
+      // Downloads
+      const dlLocal = job.status === 'done'
+        ? `<a class="dl-link" href="#" onclick="dlJob('${job.id}', false);return false">Baixar</a>`
+        : '—';
+      const dlAI = (job.status === 'done' && job.raw_output_path)
+        ? `<a class="dl-link ai" href="#" onclick="dlJob('${job.id}', true);return false">Baixar</a>`
+        : '—';
+
+      return `<tr>
+        <td title="${escHtml(job.original_filename)}">${escHtml(truncate(job.original_filename, 28))}</td>
+        <td>${badge}</td>
+        <td>${redLocal}</td>
+        <td>${redAI}</td>
+        <td>${date}</td>
+        <td>${dlLocal}</td>
+        <td>${dlAI}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) { /* ignorar */ }
+}
+
+function dlJob(jobId, raw) {
+  const url = raw ? `${API}/jobs/${jobId}/download/raw` : `${API}/jobs/${jobId}/download`;
+  fetchAndSave(url, raw ? 'documento_local.md' : 'documento.md');
+}
+
+function statusPt(s) {
+  const map = { queued: 'Na fila', ocr: 'OCR', extracting: 'Extraindo',
+    llm_refining: 'Refinando IA', done: 'Concluído', error: 'Erro' };
+  return map[s] || s;
+}
+
+function badgeHtml(status) {
+  const cls = { done: 'badge-done', error: 'badge-error', queued: 'badge-queued',
+    ocr: 'badge-processing', extracting: 'badge-processing', llm_refining: 'badge-processing' };
+  return `<span class="badge ${cls[status] || 'badge-queued'}">${statusPt(status)}</span>`;
+}
+
+function truncate(str, n) { return str.length > n ? str.slice(0, n) + '…' : str; }
+function escHtml(str) { return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
