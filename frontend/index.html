@@ -285,6 +285,8 @@
           <tr>
             <th>Arquivo</th>
             <th>Status</th>
+            <th>Tokens entrada</th>
+            <th>Tokens saída</th>
             <th>Redução local</th>
             <th>Redução com IA</th>
             <th>Modelo IA</th>
@@ -791,6 +793,8 @@ async function loadHistory() {
       return `<tr>
         <td title="${escHtml(job.original_filename)}">${escHtml(truncate(job.original_filename, 28))}</td>
         <td>${badge}</td>
+        <td>${fmt(job.tokens_original)}</td>
+        <td>${fmt(job.tokens_output)}</td>
         <td>${redLocal}</td>
         <td>${redAI}</td>
         <td>${modelIA}</td>
