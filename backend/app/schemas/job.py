@@ -20,7 +20,10 @@ class JobRead(BaseModel):
     original_file_size: Optional[int]
     output_file_size: Optional[int]
     use_llm: bool = False
+    llm_model: Optional[str] = None
     llm_tokens_used: Optional[int]
+    duration_local_s: Optional[float] = None
+    duration_llm_s: Optional[float] = None
     tokens_raw_output: Optional[int] = None
     raw_output_path: Optional[str] = None
     error_message: Optional[str]

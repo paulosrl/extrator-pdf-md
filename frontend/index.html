@@ -96,7 +96,7 @@
     #logout-btn { font-size: 0.8rem; background: none; border: 1px solid rgba(255,255,255,0.3); color: var(--header-text); padding: 0.3rem 0.75rem; border-radius: 4px; cursor: pointer; }
     #logout-btn:hover { background: rgba(255,255,255,0.1); }
 
-    .container { max-width: 920px; margin: 2rem auto; padding: 0 1rem; }
+    .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
     section.card { background: var(--card); border-radius: 10px; padding: 2rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; border: 1px solid var(--border); }
     section.card h2 { margin-bottom: 1rem; font-size: 1.1rem; }
 
@@ -160,7 +160,7 @@
 
     /* History */
     table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { color: var(--text-faint); font-weight: 600; padding: 0.6rem 0.75rem; text-align: left; border-bottom: 2px solid var(--border); background: var(--stat-bg); }
+    th { color: #ffffff; font-weight: 600; padding: 0.6rem 0.75rem; text-align: left; border-bottom: 2px solid var(--border); background: var(--header-bg); }
     td { padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border-light); }
     tr:last-child td { border-bottom: none; }
     .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
@@ -218,12 +218,16 @@
     <div id="file-name"></div>
     <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <button id="process-btn" class="btn btn-primary" onclick="processFile()" disabled>Processar PDF</button>
-      <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;cursor:pointer;user-select:none;color:var(--text)">
-        <input type="checkbox" id="use-llm-toggle" style="width:1rem;height:1rem;cursor:pointer" />
-        Refinar com IA <span style="font-size:0.75rem;color:var(--text-faint)">(GPT-4.1-mini)</span>
-      </label>
+      <label style="font-size:0.9rem;color:var(--text-muted)">Refinar com IA:</label>
+      <select id="llm-model-select" onchange="onModelChange()" style="padding:0.4rem 0.6rem;border:1px solid var(--input-border);border-radius:6px;font-size:0.88rem;background:var(--card);color:var(--text);cursor:pointer">
+        <option value="">Sem refinamento</option>
+        <option value="openai">gpt-4.1-mini (OpenAI)</option>
+        <option value="azure-gpt-4.1">gpt-4.1 (Azure)</option>
+        <option value="azure-gpt-5">gpt-5 (Azure)</option>
+      </select>
       <span id="upload-error" style="font-size:0.85rem;color:var(--error-title)"></span>
     </div>
+    <div id="model-info-card" style="display:none;margin-top:0.75rem;padding:0.75rem 1rem;border-radius:8px;border:1px solid var(--border);background:var(--stat-bg);font-size:0.82rem;line-height:1.6;color:var(--text-muted)"></div>
   </section>
 
   <!-- Progress -->
@@ -247,8 +251,18 @@
     <div class="stats-grid">
       <div class="stat-card"><div class="value" id="stat-tokens-orig">—</div><div class="label">Tokens originais</div></div>
       <div class="stat-card"><div class="value" id="stat-tokens-out">—</div><div class="label">Tokens no Markdown</div></div>
-      <div class="stat-card highlight" id="stat-red-local-card"><div class="value" id="stat-reduction-local">—</div><div class="label" id="stat-reduction-local-label">Redução de tokens</div></div>
-      <div class="stat-card highlight-ai" id="stat-red-ai-card" style="display:none"><div class="value" id="stat-reduction-ai">—</div><div class="label">Redução com IA</div></div>
+      <div class="stat-card highlight" id="stat-red-local-card">
+        <div class="value" id="stat-reduction-local">—</div>
+        <div class="label" id="stat-reduction-local-label">Redução de tokens</div>
+        <a id="stat-red-local-dl" href="#" class="dl-link" style="display:none;font-size:0.78rem;margin-top:0.25rem" onclick="downloadRawFile();return false">baixar</a>
+      </div>
+      <div class="stat-card highlight-ai" id="stat-red-ai-card" style="display:none">
+        <div class="value" id="stat-reduction-ai">—</div>
+        <div class="label">Redução com IA</div>
+        <a href="#" class="dl-link ai" style="font-size:0.78rem;margin-top:0.25rem" onclick="downloadFile();return false">baixar</a>
+      </div>
+      <div class="stat-card" id="stat-time-local-card" style="display:none"><div class="value" id="stat-time-local">—</div><div class="label">Tempo local</div></div>
+      <div class="stat-card" id="stat-time-llm-card" style="display:none;border-left:3px solid var(--stat-purple)"><div class="value" id="stat-time-llm" style="color:var(--stat-purple)">—</div><div class="label">Tempo c/ IA</div></div>
       <div class="stat-card"><div class="value" id="stat-pages">—</div><div class="label">Páginas processadas</div></div>
       <div class="stat-card"><div class="value" id="stat-ocr">—</div><div class="label">Páginas com OCR</div></div>
       <div class="stat-card" id="stat-pdf-size-card" style="display:none"><div class="value" id="stat-pdf-size">—</div><div class="label">Tamanho do PDF</div></div>
@@ -256,26 +270,8 @@
       <div class="stat-card" id="stat-llm-card" style="display:none;border-left:3px solid var(--stat-purple)"><div class="value" id="stat-llm-tokens" style="color:var(--stat-purple)">—</div><div class="label">Tokens IA usados</div></div>
     </div>
 
-    <!-- Dois botões (com IA) -->
-    <div id="download-two-col" class="download-row" style="display:none">
-      <div class="download-col">
-        <h3>MD Local</h3>
-        <p>Extração direta do PDF, sem IA</p>
-        <button class="btn btn-secondary" onclick="downloadRawFile()">Baixar MD Local</button>
-      </div>
-      <div class="download-col col-ai">
-        <h3>MD com IA</h3>
-        <p>Refinado pelo GPT-4.1-mini</p>
-        <button class="btn btn-purple" onclick="downloadFile()">Baixar MD com IA</button>
-      </div>
-    </div>
-
-    <!-- Botão único (sem IA) -->
-    <div id="download-simple">
-      <button class="btn btn-success" onclick="downloadFile()">Baixar Markdown</button>
-      <button class="btn btn-secondary" onclick="resetUpload()">Processar outro PDF</button>
-    </div>
-    <div id="download-reset-ai" style="display:none;margin-top:0.75rem">
+    <div id="download-simple" style="margin-top:1rem">
+      <button class="btn btn-success" id="btn-dl-main" onclick="downloadFile()">Baixar Markdown</button>
       <button class="btn btn-secondary" onclick="resetUpload()">Processar outro PDF</button>
     </div>
   </section>
@@ -291,9 +287,10 @@
             <th>Status</th>
             <th>Redução local</th>
             <th>Redução com IA</th>
+            <th>Modelo IA</th>
+            <th>Tempo local</th>
+            <th>Tempo c/ IA</th>
             <th>Data</th>
-            <th>MD Local</th>
-            <th>MD com IA</th>
           </tr>
         </thead>
         <tbody id="history-body"></tbody>
@@ -306,6 +303,40 @@
 <script>
 const API = '';
 let token = localStorage.getItem('token');
+
+const MODEL_INFO = {
+  'openai': {
+    nome: 'GPT-4.1 mini',
+    ano: '2025',
+    parametros: 'Não divulgado (proprietário)',
+    descricao: 'Modelo intermediário da família GPT-4.1. Alta performance com baixa latência (~50% menor que GPT-4o) e custo reduzido. Contexto de 1 milhão de tokens, geração de até 32K tokens por requisição.'
+  },
+  'azure-gpt-4.1': {
+    nome: 'GPT-4.1',
+    ano: '2025',
+    parametros: 'Não divulgado (proprietário)',
+    descricao: 'Modelo flagship da família GPT-4.1. Treinado para excelência em seguimento de instruções, tool calling e fluxos agentivos. Contexto de 1 milhão de tokens, knowledge cutoff junho de 2024.'
+  },
+  'azure-gpt-5': {
+    nome: 'GPT-5',
+    ano: '2025',
+    parametros: 'Não divulgado (proprietário)',
+    descricao: 'Sistema unificado com roteamento automático entre resposta rápida e raciocínio profundo. Estado da arte em matemática (94,6% AIME 2025) e código (74,9% SWE-bench). ~45% menos alucinações que GPT-4o. Contexto de 1 milhão de tokens.'
+  }
+};
+
+function onModelChange() {
+  const val = document.getElementById('llm-model-select').value;
+  const card = document.getElementById('model-info-card');
+  if (!val || !MODEL_INFO[val]) { card.style.display = 'none'; return; }
+  const m = MODEL_INFO[val];
+  card.innerHTML =
+    `<strong style="color:var(--text)">${m.nome}</strong> &nbsp;·&nbsp; ` +
+    `<span>Lançamento: <b>${m.ano}</b></span> &nbsp;·&nbsp; ` +
+    `<span>Parâmetros: <b>${m.parametros}</b></span>` +
+    `<div style="margin-top:0.35rem">${m.descricao}</div>`;
+  card.style.display = 'block';
+}
 let selectedFile = null;
 let currentJobId = null;
 let wsConn = null;
@@ -452,7 +483,9 @@ async function processFile() {
 
   const formData = new FormData();
   formData.append('file', selectedFile);
-  formData.append('use_llm', document.getElementById('use-llm-toggle').checked ? 'true' : 'false');
+  const llmModel = document.getElementById('llm-model-select').value;
+  formData.append('use_llm', llmModel ? 'true' : 'false');
+  if (llmModel) formData.append('llm_model', llmModel);
 
   try {
     const res = await apiFetch(`${API}/upload`, {
@@ -488,16 +521,23 @@ function setProgress(pct, msg) {
   document.getElementById('progress-msg').textContent = msg;
 }
 
+const _MODEL_LABELS = { 'openai': 'GPT-4.1-mini', 'azure-gpt-4.1': 'Azure GPT-4.1', 'azure-gpt-5': 'Azure GPT-5' };
+function _activeLlmLabel() {
+  const v = document.getElementById('llm-model-select').value;
+  return _MODEL_LABELS[v] || 'IA';
+}
+
 function startLlmProgress(startPct) {
   stopLlmProgress();
   llmProgressPct = startPct || 75;
+  const label = _activeLlmLabel();
   document.getElementById('progress-bar').classList.add('llm-mode');
-  document.getElementById('progress-title').textContent = 'Refinando com IA...';
-  setProgress(llmProgressPct, 'GPT-4.1-mini processando o documento...');
+  document.getElementById('progress-title').textContent = `Refinando com ${label}...`;
+  setProgress(llmProgressPct, `${label} processando o documento...`);
   llmProgressTimer = setInterval(() => {
     if (llmProgressPct < 95) {
       llmProgressPct += 0.25;
-      setProgress(llmProgressPct, `GPT-4.1-mini processando... ${llmProgressPct.toFixed(0)}%`);
+      setProgress(llmProgressPct, `${label} processando... ${llmProgressPct.toFixed(0)}%`);
     }
   }, 3000);
 }
@@ -590,18 +630,31 @@ function showResult(data) {
   const tokOrig = data.tokens_original || 1;
 
   if (hasRaw && data.tokens_raw_output != null) {
-    // Mostrar redução local e redução com IA separadamente
     const rawPct = ((1 - data.tokens_raw_output / tokOrig) * 100).toFixed(1);
     document.getElementById('stat-reduction-local').textContent = rawPct + '%';
     document.getElementById('stat-reduction-local-label').textContent = 'Redução local';
+    document.getElementById('stat-red-local-dl').style.display = 'inline';
     document.getElementById('stat-reduction-ai').textContent =
       data.reduction_pct != null ? data.reduction_pct.toFixed(1) + '%' : '—';
     document.getElementById('stat-red-ai-card').style.display = '';
+    // No modo com IA, o botão principal baixa o MD com IA
+    document.getElementById('btn-dl-main').textContent = 'Baixar MD com IA';
   } else {
     document.getElementById('stat-reduction-local').textContent =
       data.reduction_pct != null ? data.reduction_pct.toFixed(1) + '%' : '—';
     document.getElementById('stat-reduction-local-label').textContent = 'Redução de tokens';
+    document.getElementById('stat-red-local-dl').style.display = 'none';
     document.getElementById('stat-red-ai-card').style.display = 'none';
+    document.getElementById('btn-dl-main').textContent = 'Baixar Markdown';
+  }
+
+  if (data.duration_local_s != null) {
+    document.getElementById('stat-time-local').textContent = fmtDuration(data.duration_local_s);
+    document.getElementById('stat-time-local-card').style.display = '';
+  }
+  if (data.duration_llm_s != null) {
+    document.getElementById('stat-time-llm').textContent = fmtDuration(data.duration_llm_s);
+    document.getElementById('stat-time-llm-card').style.display = '';
   }
 
   document.getElementById('stat-pages').textContent = fmt(data.pages_total);
@@ -620,20 +673,17 @@ function showResult(data) {
     document.getElementById('stat-llm-card').style.display = '';
   }
 
-  if (hasRaw) {
-    document.getElementById('download-two-col').style.display = 'flex';
-    document.getElementById('download-simple').style.display = 'none';
-    document.getElementById('download-reset-ai').style.display = 'block';
-  } else {
-    document.getElementById('download-two-col').style.display = 'none';
-    document.getElementById('download-simple').style.display = 'flex';
-    document.getElementById('download-reset-ai').style.display = 'none';
-  }
-
   document.getElementById('result-section').style.display = 'block';
 }
 
 function fmt(v) { return v != null ? v.toLocaleString('pt-BR') : '0'; }
+
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 function fmtBytes(bytes) {
   if (bytes == null) return '—';
@@ -682,14 +732,16 @@ function resetUpload() {
   document.getElementById('progress-section').style.display = 'none';
   document.getElementById('upload-section').style.display = 'block';
   document.getElementById('file-input').value = '';
-  document.getElementById('use-llm-toggle').checked = false;
+  document.getElementById('llm-model-select').value = '';
+  document.getElementById('model-info-card').style.display = 'none';
   document.getElementById('stat-llm-card').style.display = 'none';
+  document.getElementById('stat-time-local-card').style.display = 'none';
+  document.getElementById('stat-time-llm-card').style.display = 'none';
+  document.getElementById('stat-red-local-dl').style.display = 'none';
+  document.getElementById('stat-red-ai-card').style.display = 'none';
+  document.getElementById('btn-dl-main').textContent = 'Baixar Markdown';
   document.getElementById('stat-pdf-size-card').style.display = 'none';
   document.getElementById('stat-md-size-card').style.display = 'none';
-  document.getElementById('stat-red-ai-card').style.display = 'none';
-  document.getElementById('download-two-col').style.display = 'none';
-  document.getElementById('download-reset-ai').style.display = 'none';
-  document.getElementById('download-simple').style.display = 'flex';
 }
 
 // ── Histórico ─────────────────────────────────────────────────────────────────
@@ -706,36 +758,45 @@ async function loadHistory() {
       const date = new Date(job.created_at).toLocaleString('pt-BR');
       const tokOrig = job.tokens_original || 1;
 
-      // Redução local
-      let redLocal = '—';
+      // Redução local (com link inline se disponível)
+      let redLocalPct = '—';
       if (job.tokens_raw_output != null && job.tokens_original) {
-        redLocal = ((1 - job.tokens_raw_output / tokOrig) * 100).toFixed(1) + '%';
+        redLocalPct = ((1 - job.tokens_raw_output / tokOrig) * 100).toFixed(1) + '%';
       } else if (!job.raw_output_path && job.reduction_pct != null) {
-        redLocal = job.reduction_pct.toFixed(1) + '%';
+        redLocalPct = job.reduction_pct.toFixed(1) + '%';
       }
+      const dlLocalLink = job.status === 'done'
+        ? ` <a class="dl-link" href="#" onclick="dlJob('${job.id}', !!${!!job.raw_output_path});return false">(baixar)</a>`
+        : '';
+      const redLocal = redLocalPct + dlLocalLink;
 
-      // Redução com IA
-      let redAI = '—';
+      // Redução com IA (com link inline se disponível)
+      let redAIPct = '—';
       if (job.raw_output_path && job.reduction_pct != null) {
-        redAI = job.reduction_pct.toFixed(1) + '%';
+        redAIPct = job.reduction_pct.toFixed(1) + '%';
       }
+      const dlAILink = (job.status === 'done' && job.raw_output_path)
+        ? ` <a class="dl-link ai" href="#" onclick="dlJob('${job.id}', false);return false">(baixar)</a>`
+        : '';
+      const redAI = redAIPct === '—' ? '—' : redAIPct + dlAILink;
 
-      // Downloads
-      const dlLocal = job.status === 'done'
-        ? `<a class="dl-link" href="#" onclick="dlJob('${job.id}', false);return false">Baixar</a>`
-        : '—';
-      const dlAI = (job.status === 'done' && job.raw_output_path)
-        ? `<a class="dl-link ai" href="#" onclick="dlJob('${job.id}', true);return false">Baixar</a>`
-        : '—';
+      // Modelo IA
+      const modelLabels = { 'openai': 'GPT-4.1-mini', 'azure-gpt-4.1': 'Azure GPT-4.1', 'azure-gpt-5': 'Azure GPT-5' };
+      const modelIA = job.llm_model ? (modelLabels[job.llm_model] || job.llm_model) : '—';
+
+      // Tempos
+      const timeLocal = fmtDuration(job.duration_local_s);
+      const timeLLM = fmtDuration(job.duration_llm_s);
 
       return `<tr>
         <td title="${escHtml(job.original_filename)}">${escHtml(truncate(job.original_filename, 28))}</td>
         <td>${badge}</td>
         <td>${redLocal}</td>
         <td>${redAI}</td>
+        <td>${modelIA}</td>
+        <td>${timeLocal}</td>
+        <td>${timeLLM}</td>
         <td>${date}</td>
-        <td>${dlLocal}</td>
-        <td>${dlAI}</td>
       </tr>`;
     }).join('');
   } catch (e) { /* ignorar */ }

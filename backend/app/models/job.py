@@ -44,7 +44,10 @@ class ProcessingJob(Base):
     original_file_size: Mapped[Optional[int]] = mapped_column(sa.BigInteger(), nullable=True)
     output_file_size: Mapped[Optional[int]] = mapped_column(sa.BigInteger(), nullable=True)
     use_llm: Mapped[bool] = mapped_column(sa.Boolean(), nullable=False, default=False)
+    llm_model: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     llm_tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_local_s: Mapped[Optional[float]] = mapped_column(sa.Float(), nullable=True)
+    duration_llm_s: Mapped[Optional[float]] = mapped_column(sa.Float(), nullable=True)
     tokens_raw_output: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

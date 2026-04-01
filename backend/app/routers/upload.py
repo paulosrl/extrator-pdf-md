@@ -16,10 +16,14 @@ router = APIRouter(tags=["upload"])
 MAX_BYTES = settings.MAX_FILE_SIZE_MB * 1024 * 1024
 
 
+_VALID_MODELS = {"openai", "azure-gpt-4.1", "azure-gpt-5"}
+
+
 @router.post("/upload", response_model=JobCreated, status_code=status.HTTP_202_ACCEPTED)
 async def upload_pdf(
     file: UploadFile = File(...),
     use_llm: bool = Form(False),
+    llm_model: str = Form("openai"),
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -40,11 +44,21 @@ async def upload_pdf(
             detail=f"Arquivo muito grande. Tamanho máximo: {settings.MAX_FILE_SIZE_MB} MB.",
         )
 
-    if use_llm and not settings.OPENAI_API_KEY:
-        raise HTTPException(
-            status_code=400,
-            detail="Refinamento com IA não disponível: OPENAI_API_KEY não configurada.",
-        )
+    if use_llm:
+        if llm_model not in _VALID_MODELS:
+            raise HTTPException(status_code=400, detail=f"Modelo inválido: {llm_model}.")
+        if llm_model == "openai" and not settings.OPENAI_API_KEY:
+            raise HTTPException(
+                status_code=400,
+                detail="Refinamento com IA não disponível: OPENAI_API_KEY não configurada.",
+            )
+        if llm_model.startswith("azure-") and (
+            not settings.AZURE_OPENAI_API_KEY or not settings.AZURE_OPENAI_ENDPOINT
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Refinamento Azure não disponível: AZURE_OPENAI_API_KEY ou AZURE_OPENAI_ENDPOINT não configurados.",
+            )
 
     job_id = uuid.uuid4()
     storage_path = await save_upload(file_bytes, str(current_user.id), str(job_id))
@@ -56,6 +70,7 @@ async def upload_pdf(
         original_filename=file.filename or "document.pdf",
         original_storage_path=storage_path,
         use_llm=use_llm,
+        llm_model=llm_model if use_llm else None,
     )
     db.add(job)
     await db.commit()

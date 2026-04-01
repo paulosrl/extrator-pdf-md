@@ -1,7 +1,9 @@
-"""LLM-based Markdown refinement using OpenAI gpt-4.1-mini."""
+"""LLM-based Markdown refinement — suporta OpenAI direto e Azure OpenAI."""
 from __future__ import annotations
 
 from typing import NamedTuple
+
+from openai import OpenAI
 
 from app.config import settings
 
@@ -30,9 +32,9 @@ O que você DEVE preservar:
 Retorne APENAS o Markdown refinado, sem explicações, sem blocos de código envolvendo o resultado.\
 """
 
-# Max tokens to send per chunk. gpt-4.1-mini has 1M context but we keep chunks
-# manageable to control cost and latency.
-_MAX_CHUNK_CHARS = 80_000  # ~20k tokens, well within limits
+# Max tokens to send per chunk. Modelos têm contexto grande mas mantemos chunks
+# gerenciáveis para controlar custo e latência.
+_MAX_CHUNK_CHARS = 80_000  # ~20k tokens
 
 
 class RefineResult(NamedTuple):
@@ -40,41 +42,68 @@ class RefineResult(NamedTuple):
     tokens_used: int
 
 
-def refine(markdown: str) -> RefineResult:
+def refine(markdown: str, model: str = "openai") -> RefineResult:
     """
-    Send the markdown through GPT-4.1-mini for cleanup.
-    Splits into chunks if the document is very large.
-    Returns refined markdown and total tokens consumed.
+    Envia o markdown ao modelo escolhido para limpeza.
+    model: "openai" | "azure-gpt-4.1" | "azure-gpt-5"
+    Divide em chunks se o documento for muito grande.
     """
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY não configurada")
-
-    from openai import OpenAI
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    client, deployment = _build_client(model)
+    use_temp = _supports_temperature(model)
 
     if len(markdown) <= _MAX_CHUNK_CHARS:
-        return _call(client, markdown)
+        return _call(client, deployment, markdown, use_temp)
 
-    # Split into chunks on double newlines to avoid breaking mid-paragraph
     chunks = _split_chunks(markdown, _MAX_CHUNK_CHARS)
     refined_parts: list[str] = []
     total_tokens = 0
     for chunk in chunks:
-        result = _call(client, chunk)
+        result = _call(client, deployment, chunk, use_temp)
         refined_parts.append(result.markdown)
         total_tokens += result.tokens_used
 
     return RefineResult("\n\n".join(refined_parts), total_tokens)
 
 
-def _call(client, text: str) -> RefineResult:
+def _supports_temperature(model: str) -> bool:
+    """Azure gpt-5 rejeita temperature != 1; OpenAI direto aceita."""
+    return not model.startswith("azure-")
+
+
+def _build_client(model: str) -> tuple[OpenAI, str]:
+    """Retorna (cliente OpenAI, nome do deployment/model) conforme o provider."""
+    if model.startswith("azure-"):
+        if not settings.AZURE_OPENAI_API_KEY:
+            raise ValueError("AZURE_OPENAI_API_KEY não configurada")
+        if not settings.AZURE_OPENAI_ENDPOINT:
+            raise ValueError("AZURE_OPENAI_ENDPOINT não configurado")
+        endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip("/")
+        client = OpenAI(
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            base_url=f"{endpoint}/openai/v1/",
+        )
+        # azure-gpt-4.1 → deployment "gpt-4.1"; azure-gpt-5 → "gpt-5"
+        deployment = model[len("azure-"):]
+        return client, deployment
+
+    # Provedor padrão: OpenAI direto
+    if not settings.OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY não configurada")
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    return client, settings.OPENAI_MODEL
+
+
+def _call(client: OpenAI, deployment: str, text: str, use_temperature: bool = True) -> RefineResult:
+    kwargs = {}
+    if use_temperature:
+        kwargs["temperature"] = 0.1
     response = client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
+        model=deployment,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": text},
         ],
-        temperature=0.1,  # low temperature for deterministic cleanup
+        **kwargs,
     )
     refined = response.choices[0].message.content or text
     tokens = response.usage.total_tokens if response.usage else 0
@@ -82,7 +111,7 @@ def _call(client, text: str) -> RefineResult:
 
 
 def _split_chunks(text: str, max_chars: int) -> list[str]:
-    """Split text on double newlines into chunks of at most max_chars."""
+    """Divide texto em parágrafos em chunks de no máximo max_chars."""
     paragraphs = text.split("\n\n")
     chunks: list[str] = []
     current: list[str] = []
@@ -94,7 +123,7 @@ def _split_chunks(text: str, max_chars: int) -> list[str]:
             current = []
             current_len = 0
         current.append(para)
-        current_len += len(para) + 2  # +2 for the \n\n separator
+        current_len += len(para) + 2
 
     if current:
         chunks.append("\n\n".join(current))

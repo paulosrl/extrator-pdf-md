@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     MAX_PAGES: int = 1000
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4.1-mini"
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""
 
     class Config:
         env_file = ".env"

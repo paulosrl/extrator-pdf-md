@@ -1,4 +1,5 @@
 """Celery task: full PDF processing pipeline."""
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +36,7 @@ def process_pdf(self, job_id: str) -> None:
     try:
         job = _get_job(db, job_id)
         pdf_path = job.original_storage_path
+        t_start = time.monotonic()
 
         # ── Step 1: OCR detection ──────────────────────────────────────────
         _update_status(db, job, JobStatus.ocr, message="Detectando camada de texto...")
@@ -99,21 +101,32 @@ def process_pdf(self, job_id: str) -> None:
         })
 
         md_content = markdown_builder.build(blocks, image_texts)
+        duration_local_s = round(time.monotonic() - t_start, 2)
 
         # ── Step 3b: LLM refinement (optional) ───────────────────────────
         llm_tokens_used = None
         raw_path = None
         tokens_raw_output = None
+        duration_llm_s = None
         if job.use_llm:
             # Count tokens of local (pre-LLM) markdown
             tokens_raw_output = tokens.count(md_content)
             # Save raw (pre-LLM) markdown before refinement
             raw_path = save_raw_md(job_id, md_content)
+            _MODEL_LABELS = {
+                "openai": "GPT-4.1-mini",
+                "azure-gpt-4.1": "Azure GPT-4.1",
+                "azure-gpt-5": "Azure GPT-5",
+            }
+            model_key = job.llm_model or "openai"
+            model_label = _MODEL_LABELS.get(model_key, "IA")
             publish_progress(job_id, {
                 "status": "llm_refining",
-                "message": "Refinando com IA (GPT-4.1-mini)...",
+                "message": f"Refinando com {model_label}...",
             })
-            result = llm_refine.refine(md_content)
+            t_llm_start = time.monotonic()
+            result = llm_refine.refine(md_content, model=model_key)
+            duration_llm_s = round(time.monotonic() - t_llm_start, 2)
             md_content = result.markdown
             llm_tokens_used = result.tokens_used
 
@@ -144,6 +157,8 @@ def process_pdf(self, job_id: str) -> None:
         job.original_file_size = os.path.getsize(pdf_path)
         job.output_file_size = os.path.getsize(output_path)
         job.llm_tokens_used = llm_tokens_used
+        job.duration_local_s = duration_local_s
+        job.duration_llm_s = duration_llm_s
         job.tokens_raw_output = tokens_raw_output
         job.raw_output_path = raw_path
         job.completed_at = datetime.now(timezone.utc)
@@ -163,6 +178,8 @@ def process_pdf(self, job_id: str) -> None:
             "docs_found": docs_found,
             "docs_extracted": docs_extracted,
             "llm_tokens_used": llm_tokens_used,
+            "duration_local_s": duration_local_s,
+            "duration_llm_s": duration_llm_s,
             "tokens_raw_output": tokens_raw_output,
             "has_raw_md": raw_path is not None,
         })
