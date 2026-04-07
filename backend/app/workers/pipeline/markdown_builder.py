@@ -106,40 +106,76 @@ def build(
     image_texts: Dict[int, List[str]],
 ) -> str:
     """
-    Combine text blocks and image OCR texts into a compact Markdown string.
-    No excessive blank lines — single newline between paragraphs.
+    Combine text blocks and image OCR texts into Markdown with paragraph joining.
+
+    Consecutive text lines on the same page whose vertical gap is less than
+    1.2× the line height are merged into a single paragraph (joined with a
+    space).  Headings, tables, and large vertical gaps produce separate
+    paragraphs separated by a blank line.
     """
     sorted_blocks = sorted(blocks, key=lambda b: (b.page, b.y_top))
 
-    lines: List[str] = []
+    paragraphs: List[str] = []
+    buf: List[str] = []       # accumulates lines of the current paragraph
+    prev_block = None
     last_page = -1
-    pages_with_images_done = set()
+    pages_with_images_done: set = set()
+
+    def _flush() -> None:
+        if buf:
+            paragraphs.append(" ".join(buf))
+            buf.clear()
 
     for block in sorted_blocks:
         if block.page != last_page and last_page >= 0:
-            _flush_image_texts(last_page, image_texts, pages_with_images_done, lines)
+            _flush()
+            _flush_image_texts(last_page, image_texts, pages_with_images_done, paragraphs)
         last_page = block.page
 
         if block.is_table:
+            _flush()
             md_table = table_to_markdown(block.table_data)
             if md_table:
-                lines.append(md_table)
-        elif block.is_heading:
+                paragraphs.append(md_table)
+            prev_block = None
+            continue
+
+        if block.is_heading:
+            _flush()
             text = _clean_text(block.text)
             if text and _is_valid_heading(text):
-                lines.append(f"{'#' * block.heading_level} {text}")
+                paragraphs.append(f"{'#' * block.heading_level} {text}")
             elif text:
-                lines.append(text)
+                paragraphs.append(text)
+            prev_block = None
+            continue
+
+        text = _clean_text(block.text)
+        if not text:
+            continue
+
+        if prev_block is not None and prev_block.page == block.page:
+            gap = block.y_top - prev_block.y_bottom
+            lh = prev_block.y_bottom - prev_block.y_top
+            ratio = gap / lh if lh > 0 else 999.0
+            if ratio < 1.2:
+                # Same paragraph: join with a space (handles same-line splits
+                # with negative gap and normal line-wrap with ratio ≈ 0.2–0.5)
+                buf.append(text)
+            else:
+                _flush()
+                buf.append(text)
         else:
-            text = _clean_text(block.text)
-            if text:
-                lines.append(text)
+            _flush()
+            buf.append(text)
 
+        prev_block = block
+
+    _flush()
     if last_page >= 0:
-        _flush_image_texts(last_page, image_texts, pages_with_images_done, lines)
+        _flush_image_texts(last_page, image_texts, pages_with_images_done, paragraphs)
 
-    # Join with single newline, then remove consecutive blank lines
-    result = "\n".join(lines)
+    result = "\n\n".join(p for p in paragraphs if p.strip())
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
 

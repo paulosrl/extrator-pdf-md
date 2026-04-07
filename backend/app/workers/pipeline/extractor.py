@@ -25,13 +25,13 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         r"\[intimação expedida de forma automática",
         # Institutional headers (police/MP documents)
         r"^governo\s+do\s+estado\b",        # "Governo do Estado (do Pará)" — truncated variants
-        r"^secretaria\s+de\s+estado\s*de",  # "Secretaria de Estado de Segurança..."
+        r"^secretaria\s+de\s+estado\b",     # "Secretaria de Estado..." (any form)
         r"^polícia\s+civil\s+do\s+estado",
         r"seccional\s*[-–]\s*\d+a?\s*risp",
         r"^\d+[aªº°]\s+seccional\b",
         r"^ministério\s+público\s+do\s+estado",
         # Address/footer lines in police docs
-        r"^travessa\s+\w",
+        r"^travessa\b",
         r"^protocolo\s+de\s+assinatura",
         r"^o\s+documento\s+acima\s+foi\s+assinado",
         r"^a\s+validação\s+deste\s+documento",
@@ -47,7 +47,7 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         r"^no\s+ato\s+da\s+confecção\s+do\s+documento",
         r"^tal\s+(forma\s+)?impressa",
         r"^tal\s+impressa",
-        r"^secretaria\s+de\s+estado\s*de",   # "Secretaria de Estado de Segurança..."
+        r"^secretaria\s+de\s+estado\b",       # duplicate pattern — kept for safety
         r"^\d+[aªº°]\s*(seccional|risp)\b",
         r"^risp[,.]?\s+sob\s+a",               # "RISP, sob a presidência..." (header fragment)
         r"^envolvido\(s\)\s+no\s+ato",
@@ -63,6 +63,26 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         # Police deposition form labels (sometimes merged by pdfplumber due to tight spacing)
         r"^autoridade\s+policial$",
         r"^autoridadepolicial$",
+        # Page number and form field fragments
+        r"^página$",                        # lone "Página" remnant after page-counter filter
+        r"^nome\s+das?\s+testemunhas?$",    # police form field label
+        r"^testemunha\s+\d+$",              # "TESTEMUNHA 1" / "TESTEMUNHA 2" form field
+        r"^exibidor\b",                     # police form role label
+        r"^\(a\)\s*//",                     # "(A) //CONDUTOR(A)" form remnant
+        # Signature block header/footer fragments
+        r"^e\s+defesa\b",                   # tail of "Secretaria de Estado ... e Defesa Social"
+        r"^ato\s+(do|da)\s+documento",      # fragment of biometric protocol block
+        r"^social$",                        # lone "Social" fragment from institutional header
+        r"^testemunha$",                    # lone "TESTEMUNHA" form field label
+        r"^deste$",                         # lone "deste" fragment from protocol block
+        # OCR artifacts from police form signature blocks
+        r"^autof\b",                        # OCR of "AUTO" form field label
+        r"^-[A-ZÁÉÍÓÚÀÂÊÔÃÕÇÜ]",           # line starting with dash+letter (OCR artifact)
+        r"^ístemunhas",                     # OCR of "TESTEMUNHAS" with mangled prefix
+        r"^jndo\b",                         # OCR fragment of "RAIMUNDO" partial read
+        r"^riminal\s+de\b",                 # OCR of "CRIMINAL DE SANTARÉM" with C cut
+        r"^recebedor\b",                    # police form field label
+        r"^ustiça\s+criminal\b",            # OCR of "JUSTIÇA CRIMINAL" with J cut
     ]
 ]
 
@@ -93,6 +113,9 @@ _BOILERPLATE_NOSPACE: List[re.Pattern] = [
         r"noatodaconfecção",
         r"documentoassinadoeletronicamente",   # "DOCUMENTO ASSINADO ELETRONICAMENTE [hash]"
         r"documentoassinado",                  # merged variant "DOCUMENTOASSINADO..."
+        r"assinaturasbiometricas",             # partial fragment without "protocolo" prefix
+        r"segurançapública",                   # "Segurança Pública e Defesa Social" header
+        r"//condutor",                         # "(A) //CONDUTOR(A)" form field merged
     ]
 ]
 
@@ -101,6 +124,13 @@ def _is_boilerplate(text: str) -> bool:
     t = text.strip()
     if not t:
         return False
+    # Caret is a positional OCR artifact — never in legitimate Portuguese legal text
+    if "^" in t:
+        return True
+    # Apostrophe inside an all-caps short line = OCR artifact from signature stamps
+    # e.g. "ESCRIVÃ' POLICIA", "NOME' ÍSTEMUNHAS" — not present in real document text
+    if "'" in t and t == t.upper() and len(t) < 60:
+        return True
     for pat in _BOILERPLATE_PATTERNS:
         if pat.search(t):
             return True
@@ -228,7 +258,7 @@ class TextBlock:
 # Main extraction
 # ---------------------------------------------------------------------------
 
-_Y_TOLERANCE = 3
+_Y_TOLERANCE = 5
 
 
 def extract(
@@ -260,6 +290,8 @@ def extract(
                 for i, line in enumerate(lines):
                     line = _clean_line(line)
                     if not line or _is_boilerplate(line):
+                        continue
+                    if len(line) < 3:
                         continue
                     y_norm = i / max(len(lines), 1)
                     raw_blocks.append(TextBlock(
@@ -329,6 +361,8 @@ def extract(
                 raw_text = " ".join(w["text"] for w in line_words)
                 text = _clean_line(raw_text, fix_camelcase=fix_cc)
                 if not text or _is_boilerplate(text):
+                    continue
+                if len(text) < 3:
                     continue
                 avg_size = sum(w.get("size", 12) for w in line_words) / len(line_words)
                 all_font_sizes.append(avg_size)
