@@ -6,6 +6,7 @@ from statistics import median
 from typing import List, Optional, Tuple
 
 
+
 import pdfplumber
 
 # ---------------------------------------------------------------------------
@@ -25,7 +26,7 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         r"\[intimação expedida de forma automática",
         # Institutional headers (police/MP documents)
         r"^governo\s+do\s+estado\b",        # "Governo do Estado (do Pará)" — truncated variants
-        r"^secretaria\s+de\s+estado\b",     # "Secretaria de Estado..." (any form)
+        r"^secretaria\s+(de\s+)?estado\b",  # "Secretaria de Estado..." or "Secretaria Estado..."
         r"^polícia\s+civil\s+do\s+estado",
         r"seccional\s*[-–]\s*\d+a?\s*risp",
         r"^\d+[aªº°]\s+seccional\b",
@@ -41,13 +42,14 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         r"^impressa\s+neste\s+documento",
         # MP document artifacts
         r"^mpp[aâ]$",
-        r"^do\s+estado\s+do\s+pará$",
+        r"^do\s+estado\s+do\s+pará",
+        r"^do\s+pará\b",
         r"^p\s*[áa]gina\s+\d+\s+de\s+\d+",
         # Boilerplate fragments that survive line splitting
         r"^no\s+ato\s+da\s+confecção\s+do\s+documento",
         r"^tal\s+(forma\s+)?impressa",
         r"^tal\s+impressa",
-        r"^secretaria\s+de\s+estado\b",       # duplicate pattern — kept for safety
+        r"^secretaria\s+(de\s+)?estado\b",    # duplicate — kept for safety
         r"^\d+[aªº°]\s*(seccional|risp)\b",
         r"^risp[,.]?\s+sob\s+a",               # "RISP, sob a presidência..." (header fragment)
         r"^envolvido\(s\)\s+no\s+ato",
@@ -75,6 +77,7 @@ _BOILERPLATE_PATTERNS: List[re.Pattern] = [
         r"^social$",                        # lone "Social" fragment from institutional header
         r"^testemunha$",                    # lone "TESTEMUNHA" form field label
         r"^deste$",                         # lone "deste" fragment from protocol block
+        r"^o\s+documento$",                 # lone "O documento" fragment from signature block
         # OCR artifacts from police form signature blocks
         r"^autof\b",                        # OCR of "AUTO" form field label
         r"^-[A-ZÁÉÍÓÚÀÂÊÔÃÕÇÜ]",           # line starting with dash+letter (OCR artifact)
@@ -190,54 +193,6 @@ def _clean_line(text: str, fix_camelcase: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Adaptive x_tolerance detection
-# ---------------------------------------------------------------------------
-
-def _detect_x_tolerance(page) -> float:
-    """
-    Detect appropriate x_tolerance for word extraction on this page.
-
-    Some PDFs position each character individually (char-spaced encoding),
-    creating intra-word gaps of 3–10pt. Normal PDFs have chars touching
-    (gap ≈ 0pt) with word-space gaps of 2–5pt.
-
-    Returns:
-        15.0  — char-spaced page (each char is its own text element)
-         3.0  — normal page (chars within words touch or nearly touch)
-    """
-    chars = page.chars
-    if not chars:
-        return 3.0
-
-    lines: defaultdict = defaultdict(list)
-    for c in chars:
-        lines[round(c["top"])].append(c)
-
-    n_near_zero = 0   # gap ≤ 0.5pt  (chars touching — normal encoding)
-    n_large = 0       # gap 2–12pt   (char-spaced encoding)
-
-    for y_key in sorted(lines.keys())[:40]:
-        line = sorted(lines[y_key], key=lambda c: c["x0"])
-        for i in range(1, len(line)):
-            gap = line[i]["x0"] - line[i - 1]["x1"]
-            if gap <= 0.5:
-                n_near_zero += 1
-            elif 2.0 <= gap <= 12.0:
-                n_large += 1
-
-    total = n_near_zero + n_large
-    if total == 0:
-        return 3.0
-
-    # When most adjacent-char gaps are in the 2–12pt range the page uses
-    # character-by-character positioning → need high x_tolerance to reassemble words.
-    if n_large / total > 0.50:
-        return 15.0
-
-    return 3.0
-
-
-# ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
@@ -305,10 +260,10 @@ def extract(
 
             # --- pdfplumber path --------------------------------------------
 
-            # Detect the encoding style of this page to pick x_tolerance
-            x_tol = _detect_x_tolerance(page)
-            # On normal pages apply CamelCase splitting to recover merged words
-            fix_cc = x_tol < 10.0
+            # x_tolerance=1 keeps word boundaries tight, preventing adjacent words
+            # from merging (e.g. "dePolíciaRAIMUNDO" with x_tol=3).
+            x_tol = 1.0
+            fix_cc = True
 
             # Extract tables first
             tables = page.extract_tables()
@@ -336,7 +291,7 @@ def extract(
                         table_data=cleaned,
                     ))
 
-            # Extract words with adaptive x_tolerance
+            # Extract words with tight x_tolerance for clean word separation
             words = page.extract_words(
                 extra_attrs=["size"],
                 x_tolerance=x_tol,
@@ -363,6 +318,10 @@ def extract(
                 if not text or _is_boilerplate(text):
                     continue
                 if len(text) < 3:
+                    continue
+                # QR code / reversed-text artifacts: every token ≤ 3 chars
+                # (e.g. "OIV ppa o moc edoc RQ etse edilaV" from ATPV-e QR codes)
+                if all(len(w) <= 3 for w in text.split()):
                     continue
                 avg_size = sum(w.get("size", 12) for w in line_words) / len(line_words)
                 all_font_sizes.append(avg_size)
