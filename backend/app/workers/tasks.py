@@ -1,4 +1,5 @@
 """Celery task: full PDF processing pipeline."""
+import string
 import time
 import uuid
 from datetime import datetime, timezone
@@ -9,10 +10,16 @@ from app.celery_app import celery_app
 from app.database import SyncSessionLocal
 from app.models.job import ProcessingJob, JobStatus
 from app.services.progress import publish_progress
-from app.services.storage import save_md, save_raw_md
+from app.services.storage import save_md, save_raw_md, save_rawtext
 from app.workers.pipeline import detector, extractor, images as img_pipeline
 from app.workers.pipeline import llm_refine, markdown_builder, tokens
 from app.workers.pipeline.ocr import run_ocr, OCRError
+
+
+def _normalize_words(text: str) -> set:
+    """Lowercase + strip punctuation → unique words ≥ 2 chars. Used for coverage."""
+    translator = str.maketrans("", "", string.punctuation)
+    return {w for w in text.lower().translate(translator).split() if len(w) >= 2}
 
 
 def _get_job(db: Session, job_id: str) -> ProcessingJob:
@@ -83,6 +90,26 @@ def process_pdf(self, job_id: str) -> None:
 
         blocks, raw_blocks = extractor.extract(pdf_path, ocr_results)
 
+        # ── Capture block counts and build raw text artifact ──────────────
+        blocks_total = len(raw_blocks)
+        blocks_kept = len(blocks)
+
+        rawtext_lines = []
+        current_page = -1
+        for block in raw_blocks:
+            if block.page != current_page:
+                if current_page >= 0:
+                    rawtext_lines.append("")
+                rawtext_lines.append(f"---PÁGINA {block.page + 1}---")
+                current_page = block.page
+            if block.is_table:
+                for row in block.table_data:
+                    rawtext_lines.append("\t".join(str(c) for c in row))
+            elif block.text:
+                rawtext_lines.append(block.text)
+        rawtext_content = "\n".join(rawtext_lines)
+        rawtext_path = save_rawtext(job_id, rawtext_content)
+
         publish_progress(job_id, {
             "status": "extracting",
             "message": "Extraindo imagens...",
@@ -130,6 +157,16 @@ def process_pdf(self, job_id: str) -> None:
             md_content = result.markdown
             llm_tokens_used = result.tokens_used
 
+        # ── Step 3c: Content coverage check ──────────────────────────────
+        raw_words = _normalize_words(rawtext_content)
+        if not raw_words:
+            content_coverage_pct = 100.0
+        else:
+            md_words = _normalize_words(md_content)
+            covered = len(raw_words & md_words)
+            content_coverage_pct = round(covered / len(raw_words) * 100, 2)
+        content_coverage_pct = max(0.0, min(100.0, content_coverage_pct))
+
         # ── Step 4: Token counting ────────────────────────────────────────
         # Baseline = what the user would send to the LLM *without* our tool:
         #   - full text layer via pdfplumber extract_text() (includes boilerplate)
@@ -161,6 +198,10 @@ def process_pdf(self, job_id: str) -> None:
         job.duration_llm_s = duration_llm_s
         job.tokens_raw_output = tokens_raw_output
         job.raw_output_path = raw_path
+        job.rawtext_path = rawtext_path
+        job.content_coverage_pct = content_coverage_pct
+        job.blocks_total = blocks_total
+        job.blocks_kept = blocks_kept
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
 
@@ -182,6 +223,10 @@ def process_pdf(self, job_id: str) -> None:
             "duration_llm_s": duration_llm_s,
             "tokens_raw_output": tokens_raw_output,
             "has_raw_md": raw_path is not None,
+            "content_coverage_pct": float(content_coverage_pct),
+            "blocks_total": blocks_total,
+            "blocks_kept": blocks_kept,
+            "has_rawtext": True,
         })
 
     except OCRError as e:

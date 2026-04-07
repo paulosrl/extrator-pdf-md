@@ -26,6 +26,10 @@ class JobRead(BaseModel):
     duration_llm_s: Optional[float] = None
     tokens_raw_output: Optional[int] = None
     raw_output_path: Optional[str] = None
+    rawtext_path: Optional[str] = None
+    content_coverage_pct: Optional[float] = None
+    blocks_total: Optional[int] = None
+    blocks_kept: Optional[int] = None
     error_message: Optional[str]
     created_at: datetime
     completed_at: Optional[datetime]

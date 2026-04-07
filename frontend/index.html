@@ -153,6 +153,20 @@
     .download-col.col-ai h3 { color: var(--stat-purple); }
     #download-simple { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 0.25rem; }
 
+    /* Coverage bar */
+    .coverage-bar-wrap { margin-top: 0.4rem; }
+    .coverage-bar-track { background: var(--progress-track); border-radius: 999px; height: 6px; overflow: hidden; }
+    .coverage-bar-fill { height: 100%; border-radius: 999px; background: var(--stat-green); transition: width 0.6s ease; }
+
+    /* Compare panel */
+    .compare-panel { display: none; margin-top: 1.25rem; }
+    .compare-panel.active { display: block; }
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-pane { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .compare-pane-header { background: var(--stat-bg); padding: 0.5rem 0.85rem; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .compare-pane pre { margin: 0; padding: 0.85rem; overflow: auto; max-height: 380px; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--card); line-height: 1.55; }
+
     /* Error */
     #error-section { background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; display: none; }
     #error-section h2 { color: var(--error-title); margin-bottom: 0.5rem; font-size: 1rem; }
@@ -268,11 +282,40 @@
       <div class="stat-card" id="stat-pdf-size-card" style="display:none"><div class="value" id="stat-pdf-size">—</div><div class="label">Tamanho do PDF</div></div>
       <div class="stat-card" id="stat-md-size-card" style="display:none"><div class="value" id="stat-md-size">—</div><div class="label">Tamanho do Markdown</div></div>
       <div class="stat-card" id="stat-llm-card" style="display:none;border-left:3px solid var(--stat-purple)"><div class="value" id="stat-llm-tokens" style="color:var(--stat-purple)">—</div><div class="label">Tokens IA usados</div></div>
+      <div class="stat-card" id="stat-coverage-card" style="display:none">
+        <div class="value" id="stat-coverage">—</div>
+        <div class="label">Cobertura de conteúdo</div>
+        <div class="coverage-bar-wrap"><div class="coverage-bar-track"><div class="coverage-bar-fill" id="coverage-bar-fill" style="width:0%"></div></div></div>
+      </div>
+      <div class="stat-card" id="stat-blocks-card" style="display:none">
+        <div class="value" id="stat-blocks">—</div>
+        <div class="label">Blocos preservados</div>
+      </div>
     </div>
 
     <div id="download-simple" style="margin-top:1rem">
       <button class="btn btn-success" id="btn-dl-main" onclick="downloadFile()">Baixar Markdown</button>
+      <button class="btn btn-secondary" id="btn-compare" style="display:none" onclick="toggleCompare()">Comparar texto bruto vs MD</button>
       <button class="btn btn-secondary" onclick="resetUpload()">Processar outro PDF</button>
+    </div>
+
+    <div class="compare-panel" id="compare-panel">
+      <div class="compare-grid">
+        <div class="compare-pane">
+          <div class="compare-pane-header">
+            <span>Texto bruto (pré-filtro)</span>
+            <span id="cmp-raw-words" style="font-weight:400;color:var(--text-faint)"></span>
+          </div>
+          <pre id="cmp-raw-content">Carregando...</pre>
+        </div>
+        <div class="compare-pane">
+          <div class="compare-pane-header">
+            <span>Markdown gerado</span>
+            <span id="cmp-md-words" style="font-weight:400;color:var(--text-faint)"></span>
+          </div>
+          <pre id="cmp-md-content">Carregando...</pre>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -292,6 +335,8 @@
             <th>Modelo IA</th>
             <th>Tempo local</th>
             <th>Tempo c/ IA</th>
+            <th>Cobertura</th>
+            <th>Blocos</th>
             <th>Data</th>
           </tr>
         </thead>
@@ -675,6 +720,21 @@ function showResult(data) {
     document.getElementById('stat-llm-card').style.display = '';
   }
 
+  if (data.content_coverage_pct != null) {
+    const cov = parseFloat(data.content_coverage_pct);
+    document.getElementById('stat-coverage').textContent = cov.toFixed(1) + '%';
+    document.getElementById('coverage-bar-fill').style.width = Math.min(100, cov) + '%';
+    document.getElementById('stat-coverage-card').style.display = '';
+  }
+  if (data.blocks_total != null && data.blocks_kept != null) {
+    document.getElementById('stat-blocks').textContent =
+      fmt(data.blocks_kept) + ' / ' + fmt(data.blocks_total);
+    document.getElementById('stat-blocks-card').style.display = '';
+  }
+  if (data.has_rawtext || data.rawtext_path) {
+    document.getElementById('btn-compare').style.display = '';
+  }
+
   document.getElementById('result-section').style.display = 'block';
 }
 
@@ -701,6 +761,36 @@ function downloadFile() {
 function downloadRawFile() {
   if (!currentJobId) return;
   fetchAndSave(`${API}/jobs/${currentJobId}/download/raw`, 'documento_local.md');
+}
+
+let compareLoaded = false;
+async function toggleCompare() {
+  const panel = document.getElementById('compare-panel');
+  const isActive = panel.classList.toggle('active');
+  const btn = document.getElementById('btn-compare');
+  btn.textContent = isActive ? 'Fechar comparação' : 'Comparar texto bruto vs MD';
+  if (!isActive || compareLoaded) return;
+  compareLoaded = true;
+  try {
+    const [rtRes, mdRes] = await Promise.all([
+      apiFetch(`${API}/jobs/${currentJobId}/download/rawtext`),
+      apiFetch(`${API}/jobs/${currentJobId}/download`),
+    ]);
+    const rtText = await rtRes.text();
+    const mdText = await mdRes.text();
+
+    document.getElementById('cmp-raw-content').textContent = rtText;
+    const rtWords = rtText.split(/\s+/).filter(w => w.length >= 2).length;
+    document.getElementById('cmp-raw-words').textContent =
+      rtWords.toLocaleString('pt-BR') + ' palavras';
+
+    document.getElementById('cmp-md-content').textContent = mdText;
+    const mdWords = mdText.split(/\s+/).filter(w => w.length >= 2).length;
+    document.getElementById('cmp-md-words').textContent =
+      mdWords.toLocaleString('pt-BR') + ' palavras';
+  } catch (e) {
+    document.getElementById('cmp-raw-content').textContent = 'Erro ao carregar arquivo.';
+  }
 }
 function fetchAndSave(url, fallback) {
   apiFetch(url)
@@ -744,6 +834,12 @@ function resetUpload() {
   document.getElementById('btn-dl-main').textContent = 'Baixar Markdown';
   document.getElementById('stat-pdf-size-card').style.display = 'none';
   document.getElementById('stat-md-size-card').style.display = 'none';
+  document.getElementById('stat-coverage-card').style.display = 'none';
+  document.getElementById('stat-blocks-card').style.display = 'none';
+  document.getElementById('btn-compare').style.display = 'none';
+  document.getElementById('compare-panel').classList.remove('active');
+  document.getElementById('btn-compare').textContent = 'Comparar texto bruto vs MD';
+  compareLoaded = false;
 }
 
 // ── Histórico ─────────────────────────────────────────────────────────────────
@@ -790,6 +886,12 @@ async function loadHistory() {
       const timeLocal = fmtDuration(job.duration_local_s);
       const timeLLM = fmtDuration(job.duration_llm_s);
 
+      // Cobertura e blocos
+      const coverage = job.content_coverage_pct != null
+        ? parseFloat(job.content_coverage_pct).toFixed(1) + '%' : '—';
+      const blocks = (job.blocks_total != null && job.blocks_kept != null)
+        ? `${fmt(job.blocks_kept)}/${fmt(job.blocks_total)}` : '—';
+
       return `<tr>
         <td title="${escHtml(job.original_filename)}">${escHtml(truncate(job.original_filename, 28))}</td>
         <td>${badge}</td>
@@ -800,6 +902,8 @@ async function loadHistory() {
         <td>${modelIA}</td>
         <td>${timeLocal}</td>
         <td>${timeLLM}</td>
+        <td>${coverage}</td>
+        <td>${blocks}</td>
         <td>${date}</td>
       </tr>`;
     }).join('');

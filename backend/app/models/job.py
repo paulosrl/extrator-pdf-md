@@ -49,6 +49,10 @@ class ProcessingJob(Base):
     duration_local_s: Mapped[Optional[float]] = mapped_column(sa.Float(), nullable=True)
     duration_llm_s: Mapped[Optional[float]] = mapped_column(sa.Float(), nullable=True)
     tokens_raw_output: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rawtext_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_coverage_pct: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
+    blocks_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    blocks_kept: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -40,6 +40,15 @@ def save_raw_md(job_id: str, content: str) -> str:
     return path
 
 
+def save_rawtext(job_id: str, content: str) -> str:
+    dir_path = Path(settings.STORAGE_PATH) / "outputs"
+    dir_path.mkdir(parents=True, exist_ok=True)
+    path = str(dir_path / f"{job_id}_rawtext.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path
+
+
 def read_md(output_path: str) -> str:
     with open(output_path, "r", encoding="utf-8") as f:
         return f.read()
