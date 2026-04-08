@@ -14,7 +14,7 @@ Sistema web que converte PDFs em Markdown limpo e otimizado para uso com LLMs. R
 - **Tokens:** tiktoken / cl100k_base
 - **Auth:** JWT (python-jose + bcrypt)
 - **Frontend:** HTML/JS puro (single-file: `frontend/index.html`)
-- **Infraestrutura:** Docker Compose (4 serviços: postgres, redis, backend, worker)
+- **Infraestrutura:** Docker Compose (5 serviços: postgres, redis, migrate, backend, worker)
 - **Gerenciador de pacotes:** pip (requirements.txt)
 - **Testes:** nenhum implementado ainda
 - **CI/CD:** nenhum configurado
@@ -31,7 +31,7 @@ extrator-pdf-md/
     ├── requirements.txt
     ├── alembic.ini
     ├── alembic/
-    │   └── versions/           # 7 migrations (0001–0007)
+    │   └── versions/           # 11 migrations (0001–0011)
     └── app/
         ├── main.py             # Entrypoint FastAPI, monta routers e serve frontend
         ├── config.py           # Settings via pydantic-settings (lê .env)
@@ -63,7 +63,7 @@ extrator-pdf-md/
 ```
 
 ## Arquivos-chave para entender o projeto
-- `backend/app/workers/tasks.py` — orquestra todo o pipeline de 6 etapas; ponto central da lógica de negócio
+- `backend/app/workers/tasks.py` — orquestra todo o pipeline de processamento; ponto central da lógica de negócio
 - `backend/app/workers/pipeline/extractor.py` — coração do sistema: extração, detecção de boilerplate, x_tolerance adaptativo, heading detection por ratio de font size
 - `backend/app/workers/pipeline/markdown_builder.py` — converte blocos extraídos em Markdown válido, com validação de headings e correção de artefatos OCR
 - `backend/app/workers/pipeline/llm_refine.py` — integração com OpenAI, chunking para documentos grandes, system prompt especializado em documentos jurídicos
@@ -108,8 +108,10 @@ docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
 - `MAX_FILE_SIZE_MB` — limite de tamanho de upload em MB (padrão: `200`)
 - `MAX_PAGES` — limite de páginas por PDF (padrão: `1000`)
 - `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` — credenciais do PostgreSQL (devem bater com DATABASE_URL)
-- `OPENAI_API_KEY` — chave da API OpenAI; **opcional** — se vazio, refinamento IA é desabilitado silenciosamente
+- `OPENAI_API_KEY` — chave da API OpenAI; **opcional** — se vazio, refinamento OpenAI é desabilitado silenciosamente
 - `OPENAI_MODEL` — modelo OpenAI a usar (padrão: `gpt-4.1-mini`)
+- `AZURE_OPENAI_API_KEY` — chave da API Azure OpenAI; **opcional** — necessária para `llm_model=azure-gpt-4.1` ou `azure-gpt-5`
+- `AZURE_OPENAI_ENDPOINT` — endpoint do recurso Azure OpenAI; **opcional** — necessário junto com `AZURE_OPENAI_API_KEY`
 
 ## Convenções adotadas no projeto
 - **Commits:** `tipo: descrição em português` (ex: `feat:`, `fix:`, `chore:`, `docs:`)
@@ -128,23 +130,28 @@ docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
    └── Enfileira task Celery: process_pdf(job_id)
 
 2. Worker Celery executa process_pdf:
-   ├── detector.detect_pages()     → identifica páginas escaneadas vs. com texto
-   ├── ocr.run_ocr()               → pytesseract nas páginas escaneadas (pt+en)
-   ├── extractor.extract()         → pdfplumber com x_tolerance adaptativo
+   ├── detector.detect_pages()          → identifica páginas escaneadas vs. com texto
+   ├── ocr.run_ocr()                    → pytesseract nas páginas escaneadas (pt+en)
+   ├── extractor.extract()              → pdfplumber com x_tolerance adaptativo
    │   ├── filtra boilerplate (padrões regex + positional/global repetition)
    │   └── detecta headings por ratio de font size vs. mediana
-   ├── images.extract_images()     → texto de imagens embutidas
-   ├── markdown_builder.build()    → monta Markdown final
-   ├── [opcional] llm_refine.refine() → GPT-4.1-mini com chunking
-   └── tokens.count()              → tiktoken para medir redução
+   ├── save_rawtext()                   → salva texto bruto com tags ---PÁGINA N--- (para diff/debug)
+   ├── images.extract_images()          → texto de imagens embutidas no PDF
+   ├── images.count_pages_with_images() → conta páginas com imagens embutidas
+   ├── markdown_builder.build()         → monta Markdown final
+   ├── [opcional] llm_refine.refine()   → GPT-4.1-mini/Azure com chunking; status llm_refining persistido no banco
+   ├── cobertura: _normalize_words()    → verifica % de palavras do rawtext presentes no MD final
+   └── tokens.count()                   → tiktoken para medir redução
 
 3. Progresso publicado no Redis a cada etapa → WS /ws/{job_id} → frontend
 
-4. Resultado salvo em /data/{job_id}/output.md
-   └── Métricas gravadas no banco (tokens_original, tokens_output, reduction_pct, etc.)
+4. Resultado salvo em /data/{job_id}/output.md e /data/{job_id}/rawtext.txt
+   └── Métricas gravadas no banco (tokens_original, tokens_output, reduction_pct,
+       content_coverage_pct, blocks_total, blocks_kept, duration_local_s, duration_llm_s, etc.)
 
-5. GET /jobs/{id}/download        → serve output.md
-   GET /jobs/{id}/download/raw    → serve Markdown pré-refinamento (se use_llm=true)
+5. GET /jobs/{id}/download          → serve output.md
+   GET /jobs/{id}/download/raw      → serve Markdown pré-refinamento (se use_llm=true)
+   GET /jobs/{id}/download/rawtext  → serve texto bruto com tags de página (sempre disponível)
 ```
 
 ## Integrações externas
@@ -165,7 +172,6 @@ docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
 - **Sem testes automatizados** — nenhum arquivo de teste existe no projeto
 - **Sem CI/CD** — nenhum workflow GitHub Actions ou equivalente
 - **CORS aberto** (`allow_origins=["*"]`) em `main.py` — aceitável para desenvolvimento, deve ser restrito em produção
-- **`import os` dentro da função** `process_pdf` em `tasks.py` (linha 138) — deveria estar no topo do arquivo
 - **Worker Celery sem retry** (`max_retries=0`) — falhas não são retentadas automaticamente
 
 ## O que NÃO fazer neste projeto

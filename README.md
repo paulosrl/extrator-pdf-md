@@ -121,6 +121,7 @@ Endpoints principais:
 | `GET` | `/jobs/{id}` | Status e métricas de um job |
 | `GET` | `/jobs/{id}/download` | Baixar Markdown final |
 | `GET` | `/jobs/{id}/download/raw` | Baixar Markdown local (pré-refinamento IA) |
+| `GET` | `/jobs/{id}/download/rawtext` | Baixar texto bruto com tags de página |
 | `WS` | `/ws/{job_id}` | WebSocket de progresso em tempo real |
 
 ## Pipeline de processamento
