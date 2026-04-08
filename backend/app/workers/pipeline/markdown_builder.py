@@ -4,6 +4,14 @@ from typing import Dict, List
 
 from app.workers.pipeline.extractor import TextBlock
 
+# ---------------------------------------------------------------------------
+# Near-duplicate paragraph deduplication
+# ---------------------------------------------------------------------------
+
+_SIGNIFICANT_WORD = re.compile(r'[a-záéíóúàâêôãõçü]{4,}', re.IGNORECASE)
+_DEDUP_THRESHOLD = 0.75   # Jaccard similarity above which a paragraph is a duplicate
+_DEDUP_MIN_LEN   = 80     # only compare paragraphs longer than this (ignore short lines)
+
 # Phantom-space split-word fix: single uppercase consonant before lowercase
 # accented vowel continuation — artifact of certain PDF encodings.
 # e.g. "N úmero:" → "Número:",  "Ú ltima:" → "Última:"
@@ -24,6 +32,38 @@ _SIGNATURE_STAMP_PAT = re.compile(r"\w+:\d{5,}")
 
 # Timestamp pattern in headings (e.g. "PERITO: 14:48:54")
 _TIMESTAMP_PAT = re.compile(r"\d{1,2}:\d{2}:\d{2}")
+
+
+def _paragraph_fingerprint(text: str) -> frozenset:
+    """Set of significant words (≥4 chars) used for Jaccard deduplication."""
+    return frozenset(_SIGNIFICANT_WORD.findall(text.lower()))
+
+
+def _deduplicate_paragraphs(paragraphs: List[str]) -> List[str]:
+    """
+    Remove near-duplicate paragraphs (Jaccard ≥ 0.75 on significant words).
+
+    Keeps the first occurrence and drops subsequent copies.  Structural elements
+    (headings, page tags, tables, short lines) are always kept.
+    """
+    seen: List[frozenset] = []
+    result: List[str] = []
+    for p in paragraphs:
+        # Always preserve structural / short elements
+        if len(p) < _DEDUP_MIN_LEN or p.startswith(('#', '<!--', '|')):
+            result.append(p)
+            continue
+        fp = _paragraph_fingerprint(p)
+        if fp:
+            is_dup = any(
+                len(fp & s) / len(fp | s) >= _DEDUP_THRESHOLD
+                for s in seen if s
+            )
+            if is_dup:
+                continue
+        seen.append(fp)
+        result.append(p)
+    return result
 
 
 def _is_valid_heading(text: str) -> bool:
@@ -127,10 +167,12 @@ def build(
             buf.clear()
 
     for block in sorted_blocks:
-        if block.page != last_page and last_page >= 0:
+        if block.page != last_page:
             _flush()
-            _flush_image_texts(last_page, image_texts, pages_with_images_done, paragraphs)
-        last_page = block.page
+            if last_page >= 0:
+                _flush_image_texts(last_page, image_texts, pages_with_images_done, paragraphs)
+            last_page = block.page
+            paragraphs.append(f"<!-- page {last_page + 1} -->")
 
         if block.is_table:
             _flush()
@@ -174,6 +216,8 @@ def build(
     _flush()
     if last_page >= 0:
         _flush_image_texts(last_page, image_texts, pages_with_images_done, paragraphs)
+
+    paragraphs = _deduplicate_paragraphs(paragraphs)
 
     result = "\n\n".join(p for p in paragraphs if p.strip())
     result = re.sub(r"\n{3,}", "\n\n", result)

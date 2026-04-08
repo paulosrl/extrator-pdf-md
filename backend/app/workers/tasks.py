@@ -1,4 +1,5 @@
 """Celery task: full PDF processing pipeline."""
+import os
 import string
 import time
 import uuid
@@ -14,6 +15,12 @@ from app.services.storage import save_md, save_raw_md, save_rawtext
 from app.workers.pipeline import detector, extractor, images as img_pipeline
 from app.workers.pipeline import llm_refine, markdown_builder, tokens
 from app.workers.pipeline.ocr import run_ocr, OCRError
+
+_MODEL_LABELS = {
+    "openai": "GPT-4.1-mini",
+    "azure-gpt-4.1": "Azure GPT-4.1",
+    "azure-gpt-5": "Azure GPT-5",
+}
 
 
 def _normalize_words(text: str) -> set:
@@ -140,19 +147,28 @@ def process_pdf(self, job_id: str) -> None:
             tokens_raw_output = tokens.count(md_content)
             # Save raw (pre-LLM) markdown before refinement
             raw_path = save_raw_md(job_id, md_content)
-            _MODEL_LABELS = {
-                "openai": "GPT-4.1-mini",
-                "azure-gpt-4.1": "Azure GPT-4.1",
-                "azure-gpt-5": "Azure GPT-5",
-            }
             model_key = job.llm_model or "openai"
             model_label = _MODEL_LABELS.get(model_key, "IA")
-            publish_progress(job_id, {
-                "status": "llm_refining",
-                "message": f"Refinando com {model_label}...",
-            })
+            # Persiste llm_refining no banco para que reconexões WS não retrocedam
+            _update_status(db, job, JobStatus.llm_refining,
+                           message=f"Refinando com {model_label}...")
+
+            def llm_progress(done: int, total: int) -> None:
+                msg = (
+                    f"Refinando com {model_label}... ({done}/{total})"
+                    if total > 1
+                    else f"Refinando com {model_label}..."
+                )
+                publish_progress(job_id, {
+                    "status": "llm_refining",
+                    "message": msg,
+                    "llm_chunk": done,
+                    "llm_chunks_total": total,
+                })
+
             t_llm_start = time.monotonic()
-            result = llm_refine.refine(md_content, model=model_key)
+            result = llm_refine.refine(md_content, model=model_key,
+                                       progress_callback=llm_progress)
             duration_llm_s = round(time.monotonic() - t_llm_start, 2)
             md_content = result.markdown
             llm_tokens_used = result.tokens_used
@@ -185,7 +201,6 @@ def process_pdf(self, job_id: str) -> None:
         output_path = save_md(job_id, md_content)
 
         # ── Step 6: Finalize ──────────────────────────────────────────────
-        import os
         job.status = JobStatus.done
         job.output_storage_path = output_path
         job.tokens_original = tokens_orig

@@ -1,7 +1,8 @@
 """LLM-based Markdown refinement — suporta OpenAI direto e Azure OpenAI."""
 from __future__ import annotations
 
-from typing import NamedTuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, NamedTuple, Optional
 
 from openai import OpenAI
 
@@ -26,15 +27,16 @@ O que você DEVE corrigir:
 O que você DEVE preservar:
 - Toda tabela em formato Markdown
 - Headings que são seções reais do documento
-- Comentários HTML como <!-- documento anexado -->
+- Comentários HTML como <!-- page N --> e <!-- documento anexado -->
 - Listas e estruturas de dados
 
 Retorne APENAS o Markdown refinado, sem explicações, sem blocos de código envolvendo o resultado.\
 """
 
-# Max tokens to send per chunk. Modelos têm contexto grande mas mantemos chunks
-# gerenciáveis para controlar custo e latência.
-_MAX_CHUNK_CHARS = 80_000  # ~20k tokens
+# Tamanho máximo por chunk (chars). Chunks menores permitem paralelismo maior
+# e reduzem a latência percebida em documentos grandes.
+_MAX_CHUNK_CHARS = 40_000  # ~10k tokens
+_MAX_PARALLEL    = 4       # máximo de requisições LLM simultâneas
 
 
 class RefineResult(NamedTuple):
@@ -42,27 +44,52 @@ class RefineResult(NamedTuple):
     tokens_used: int
 
 
-def refine(markdown: str, model: str = "openai") -> RefineResult:
+def refine(
+    markdown: str,
+    model: str = "openai",
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> RefineResult:
     """
     Envia o markdown ao modelo escolhido para limpeza.
     model: "openai" | "azure-gpt-4.1" | "azure-gpt-5"
-    Divide em chunks se o documento for muito grande.
+    Divide em chunks e os processa em paralelo quando há mais de um.
+    progress_callback(done, total) é chamado a cada chunk concluído.
     """
     client, deployment = _build_client(model)
     use_temp = _supports_temperature(model)
 
     if len(markdown) <= _MAX_CHUNK_CHARS:
-        return _call(client, deployment, markdown, use_temp)
+        if progress_callback:
+            progress_callback(0, 1)
+        result = _call(client, deployment, markdown, use_temp)
+        if progress_callback:
+            progress_callback(1, 1)
+        return result
 
     chunks = _split_chunks(markdown, _MAX_CHUNK_CHARS)
-    refined_parts: list[str] = []
+    n = len(chunks)
+    refined_parts: list[str | None] = [None] * n
     total_tokens = 0
-    for chunk in chunks:
-        result = _call(client, deployment, chunk, use_temp)
-        refined_parts.append(result.markdown)
-        total_tokens += result.tokens_used
 
-    return RefineResult("\n\n".join(refined_parts), total_tokens)
+    if progress_callback:
+        progress_callback(0, n)
+
+    with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, n)) as pool:
+        futures = {
+            pool.submit(_call, client, deployment, chunk, use_temp): i
+            for i, chunk in enumerate(chunks)
+        }
+        done_count = 0
+        for future in as_completed(futures):
+            i = futures[future]
+            result = future.result()   # propaga exceções
+            refined_parts[i] = result.markdown
+            total_tokens += result.tokens_used
+            done_count += 1
+            if progress_callback:
+                progress_callback(done_count, n)
+
+    return RefineResult("\n\n".join(p for p in refined_parts if p is not None), total_tokens)
 
 
 def _supports_temperature(model: str) -> bool:

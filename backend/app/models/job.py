@@ -15,6 +15,7 @@ class JobStatus(str, enum.Enum):
     queued = "queued"
     ocr = "ocr"
     extracting = "extracting"
+    llm_refining = "llm_refining"
     done = "done"
     error = "error"
 
