@@ -1,146 +1,36 @@
 """Extract text blocks from PDF, filtering repetitive headers/footers."""
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from statistics import median
+from statistics import median, mean as _mean, stdev as _stdev
 from typing import List, Optional, Tuple
-
-
 
 import pdfplumber
 
+# Suppress pdfminer noise (unknown page label styles, etc.)
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
+
+
 # ---------------------------------------------------------------------------
-# Boilerplate detection
+# Minimal structural artifact checks (not document-type-specific)
 # ---------------------------------------------------------------------------
 
-# Patterns matched against normal (spaced) text
-_BOILERPLATE_PATTERNS: List[re.Pattern] = [
-    re.compile(p, re.IGNORECASE) for p in [
-        r"^tribunal de justiça do estado",
-        r"^pje\s*[-–]\s*processo judicial eletrônico",
-        r"^processo judicial eletrônico$",
-        r"^\d+\s*/\s*\d+$",
-        r"^p\s*[áa]gina\s+\d+\s+(de|/)\s+\d+",
-        r"\d+[aªº°]\s+(pj|vara|comarca|seccional)\b",
-        r"^(pj|vara|comarca)\s+(criminal|civel|c[íi]vel)\b",
-        r"\[intimação expedida de forma automática",
-        # Institutional headers (police/MP documents)
-        r"^governo\s+do\s+estado\b",        # "Governo do Estado (do Pará)" — truncated variants
-        r"^secretaria\s+(de\s+)?estado\b",  # "Secretaria de Estado..." or "Secretaria Estado..."
-        r"^polícia\s+civil\s+do\s+estado",
-        r"seccional\s*[-–]\s*\d+a?\s*risp",
-        r"^\d+[aªº°]\s+seccional\b",
-        r"^ministério\s+público\s+do\s+estado",
-        # Address/footer lines in police docs
-        r"^travessa\b",
-        r"^protocolo\s+de\s+assinatura",
-        r"^o\s+documento\s+acima\s+foi\s+assinado",
-        r"^a\s+validação\s+deste\s+documento",
-        r"^não\s+existem\s+biometrias",
-        r"^deste\s+documento\s+poderá\s+ser",
-        r"^do\(s\)\s+envolvido\(s\)\s+no\s+ato",
-        r"^impressa\s+neste\s+documento",
-        # MP document artifacts
-        r"^mpp[aâ]$",
-        r"^do\s+estado\s+do\s+pará",
-        r"^do\s+pará\b",
-        r"^p\s*[áa]gina\s+\d+\s+de\s+\d+",
-        # Boilerplate fragments that survive line splitting
-        r"^no\s+ato\s+da\s+confecção\s+do\s+documento",
-        r"^tal\s+(forma\s+)?impressa",
-        r"^tal\s+impressa",
-        r"^secretaria\s+(de\s+)?estado\b",    # duplicate — kept for safety
-        r"^\d+[aªº°]\s*(seccional|risp)\b",
-        r"^risp[,.]?\s+sob\s+a",               # "RISP, sob a presidência..." (header fragment)
-        r"^envolvido\(s\)\s+no\s+ato",
-        r"^de\s+tal\s+forma",
-        r"^documento\s+poderá\s+ser\s+realizada",
-        r"^qualquer\s+tempo\s+junto",
-        r"^protocolo$",                        # lone "PROTOCOLO" line (split from full header)
-        r"^defesa\s+social$",                  # "Defesa Social" header fragment
-        # Signature block labels that appear alone as large text
-        r"^eletronicamente$",
-        r"^assinado$",
-        r"^assinado\s+eletronicamente",
-        # Police deposition form labels (sometimes merged by pdfplumber due to tight spacing)
-        r"^autoridade\s+policial$",
-        r"^autoridadepolicial$",
-        # Page number and form field fragments
-        r"^página$",                        # lone "Página" remnant after page-counter filter
-        r"^nome\s+das?\s+testemunhas?$",    # police form field label
-        r"^testemunha\s+\d+$",              # "TESTEMUNHA 1" / "TESTEMUNHA 2" form field
-        r"^exibidor\b",                     # police form role label
-        r"^\(a\)\s*//",                     # "(A) //CONDUTOR(A)" form remnant
-        # Signature block header/footer fragments
-        r"^e\s+defesa\b",                   # tail of "Secretaria de Estado ... e Defesa Social"
-        r"^ato\s+(do|da)\s+documento",      # fragment of biometric protocol block
-        r"^social$",                        # lone "Social" fragment from institutional header
-        r"^testemunha$",                    # lone "TESTEMUNHA" form field label
-        r"^deste$",                         # lone "deste" fragment from protocol block
-        r"^o\s+documento$",                 # lone "O documento" fragment from signature block
-        # OCR artifacts from police form signature blocks
-        r"^autof\b",                        # OCR of "AUTO" form field label
-        r"^-[A-ZÁÉÍÓÚÀÂÊÔÃÕÇÜ]",           # line starting with dash+letter (OCR artifact)
-        r"^ístemunhas",                     # OCR of "TESTEMUNHAS" with mangled prefix
-        r"^jndo\b",                         # OCR fragment of "RAIMUNDO" partial read
-        r"^riminal\s+de\b",                 # OCR of "CRIMINAL DE SANTARÉM" with C cut
-        r"^recebedor\b",                    # police form field label
-        r"^ustiça\s+criminal\b",            # OCR of "JUSTIÇA CRIMINAL" with J cut
-    ]
-]
+def _is_structural_artifact(text: str) -> bool:
+    """
+    Reject only universal encoding/OCR structural artifacts — not document patterns.
 
-# Patterns matched against text with ALL whitespace removed
-_BOILERPLATE_NOSPACE: List[re.Pattern] = [
-    re.compile(p, re.IGNORECASE) for p in [
-        r"estedocumentofoigerado",      # "Este documento foi gerado"
-        r"númerododocumento",
-        r"assinadoeletronicamentepor",
-        r"https?://",
-        r"num\.\d+.*pág\.",
-        r"núm\.\d+.*pág\.",
-        r"protocolo(de)?assinatura",
-        r"coletabiométrica",
-        r"bancodedadosdosistemasisp",
-        r"validaçãodestedo(c|cu)mento",
-        r"nãoexistembiometrias",
-        r"documentofoiassinadopelacol",
-        r"página\d+de\d+",
-        r"página\d+/\d+",
-        r"consultadocumento",
-        r"listview\.seam",
-        r"pje\.tjpa\.jus\.br",
-        r"cep\d{5}",
-        r"protocolodeassinaturasbiometricas",
-        r"doestadodopará",
-        r"secretariadeestadode",         # "Secretaria de Estado de..." (merged variant)
-        r"noatodaconfecção",
-        r"documentoassinadoeletronicamente",   # "DOCUMENTO ASSINADO ELETRONICAMENTE [hash]"
-        r"documentoassinado",                  # merged variant "DOCUMENTOASSINADO..."
-        r"assinaturasbiometricas",             # partial fragment without "protocolo" prefix
-        r"segurançapública",                   # "Segurança Pública e Defesa Social" header
-        r"//condutor",                         # "(A) //CONDUTOR(A)" form field merged
-    ]
-]
-
-
-def _is_boilerplate(text: str) -> bool:
+    - Caret (^): positional OCR noise, never in legitimate Portuguese text.
+    - Apostrophe inside short all-caps line: OCR artifact from signature stamps
+      (e.g. "ESCRIVÃ' POLICIA"). Real Portuguese headings don't have mid-word apostrophes.
+    """
     t = text.strip()
     if not t:
         return False
-    # Caret is a positional OCR artifact — never in legitimate Portuguese legal text
     if "^" in t:
         return True
-    # Apostrophe inside an all-caps short line = OCR artifact from signature stamps
-    # e.g. "ESCRIVÃ' POLICIA", "NOME' ÍSTEMUNHAS" — not present in real document text
     if "'" in t and t == t.upper() and len(t) < 60:
         return True
-    for pat in _BOILERPLATE_PATTERNS:
-        if pat.search(t):
-            return True
-    t_compact = re.sub(r"\s+", "", t)
-    for pat in _BOILERPLATE_NOSPACE:
-        if pat.search(t_compact):
-            return True
     return False
 
 
@@ -179,12 +69,7 @@ def _split_camelcase_words(text: str) -> str:
 
 
 def _clean_line(text: str, fix_camelcase: bool = False) -> str:
-    """
-    Clean a raw extracted text line:
-    - Remove null bytes (font ligature encoding artifacts)
-    - Optionally split CamelCase-merged words (used for normal-x_tol pages)
-    - Merge decorative split initials
-    """
+    """Strip null bytes, optionally split CamelCase, merge split initials."""
     text = text.replace("\x00", "")
     if fix_camelcase:
         text = _split_camelcase_words(text)
@@ -223,17 +108,15 @@ def extract(
     """
     Extract text blocks from all pages.
     Uses OCR text for scanned pages, pdfplumber for text pages.
-    Filters repetitive headers/footers.
+    Filters repetitive headers/footers via generic positional clustering.
     """
     ocr_map = {page_idx: text for page_idx, text in ocr_results if text is not None}
 
-    all_blocks: List[TextBlock] = []
-    table_regions: List[Tuple[int, float, float]] = []
+    all_font_sizes = []
+    raw_blocks: List[TextBlock] = []
 
     with pdfplumber.open(pdf_path) as pdf:
         total_pages = len(pdf.pages)
-        all_font_sizes = []
-        raw_blocks: List[TextBlock] = []
 
         for page_idx, page in enumerate(pdf.pages):
             page_h = page.height or 1
@@ -242,13 +125,14 @@ def extract(
             if page_idx in ocr_map:
                 ocr_text = ocr_map[page_idx]
                 lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
+                n_lines = max(len(lines), 1)
                 for i, line in enumerate(lines):
                     line = _clean_line(line)
-                    if not line or _is_boilerplate(line):
+                    if not line or len(line) < 3:
                         continue
-                    if len(line) < 3:
+                    if _is_structural_artifact(line):
                         continue
-                    y_norm = i / max(len(lines), 1)
+                    y_norm = i / n_lines
                     raw_blocks.append(TextBlock(
                         page=page_idx,
                         y_top=y_norm,
@@ -263,7 +147,6 @@ def extract(
             # x_tolerance=1 keeps word boundaries tight, preventing adjacent words
             # from merging (e.g. "dePolíciaRAIMUNDO" with x_tol=3).
             x_tol = 1.0
-            fix_cc = True
 
             # Extract tables first
             tables = page.extract_tables()
@@ -273,7 +156,6 @@ def extract(
                 y_top_norm = bbox[1] / page_h
                 y_bottom_norm = bbox[3] / page_h
                 table_bboxes.append((y_top_norm, y_bottom_norm))
-                table_regions.append((page_idx, y_top_norm, y_bottom_norm))
 
             for table_data, (y_top_n, y_bottom_n) in zip(tables, table_bboxes):
                 cleaned = [
@@ -314,10 +196,10 @@ def extract(
             for y_bucket, line_words in sorted(lines_map.items()):
                 line_words.sort(key=lambda w: w["x0"])
                 raw_text = " ".join(w["text"] for w in line_words)
-                text = _clean_line(raw_text, fix_camelcase=fix_cc)
-                if not text or _is_boilerplate(text):
+                text = _clean_line(raw_text, fix_camelcase=True)
+                if not text or len(text) < 3:
                     continue
-                if len(text) < 3:
+                if _is_structural_artifact(text):
                     continue
                 # QR code / reversed-text artifacts: every token ≤ 3 chars
                 # (e.g. "OIV ppa o moc edoc RQ etse edilaV" from ATPV-e QR codes)
@@ -342,7 +224,6 @@ def extract(
         for block in raw_blocks:
             if block.is_table or not block.text:
                 continue
-            # Must have enough meaningful characters and a minimum absolute font size
             n_alpha = sum(1 for c in block.text if c.isalpha())
             if n_alpha < 3 or block.font_size < 10.0:
                 continue
@@ -357,58 +238,127 @@ def extract(
                 block.is_heading = True
                 block.heading_level = 3
 
-    filtered = _filter_repetitive(raw_blocks, total_pages)
+    filtered = _filter_headers_footers(raw_blocks, total_pages)
     return filtered, raw_blocks
 
 
 # ---------------------------------------------------------------------------
-# Repetitive header/footer removal
+# Generic header/footer detection — no hard-coded document patterns
 # ---------------------------------------------------------------------------
 
-def _filter_repetitive(blocks: List[TextBlock], total_pages: int) -> List[TextBlock]:
+# Zone boundaries (normalised 0–1 page height)
+_HEADER_ZONE = 0.18   # top 18% of page
+_FOOTER_ZONE = 0.82   # bottom 18% of page
+
+# Thresholds
+_POSITIONAL_FREQ  = 0.18   # must appear on ≥18% of pages (≥2 occurrences min) in the zone
+_POSITIONAL_STD   = 0.05   # y-position must vary < 5% of page height across pages
+_GLOBAL_FREQ      = 0.70   # appears on ≥70% of ALL pages → boilerplate anywhere
+_PAGENUM_FREQ     = 0.15   # page-number lines in zone on ≥15% of pages
+_PAGENUM_ZONE     = 0.18   # zone for page-number detection
+
+# Digit-only OR "Página N/M" style lines
+_PAGE_NUM_PAT = re.compile(
+    r"^(?:p[aá]gina\s+)?\d+(?:\s*[/|]\s*\d+|\s+de\s+\d+)?$",
+    re.IGNORECASE,
+)
+
+# Normalization helpers for text-variant grouping
+_NORM_NON_ALPHA = re.compile(r"[^a-záéíóúàâêôãõçü\s]", re.IGNORECASE)
+
+
+def _norm_key(text: str) -> str:
     """
-    Remove blocks that are repetitive headers, footers, or page numbers.
+    Normalise text for header/footer grouping so that minor variants of the
+    same repeated block are counted together instead of as separate entries.
 
-    Strategy 1 — positional: text in top 20% or bottom 20% of page appearing
-    on ≥40% of pages is considered a header/footer.
+    Steps:
+    1. Lowercase
+    2. Remove all non-alphabetic characters (digits, punctuation, special chars)
+       — handles "Pág. 2" == "Pág. 6", OCR digit/letter confusions (1 vs I),
+         dash/no-dash variants, CEP numbers, etc.
+    3. Sort words alphabetically — handles multi-column reading-order variations
+       where the same words appear in different sequences across pages
+       (e.g. "Secretaria de Estado de Segurança" vs "de Estado de Segurança Secretaria")
 
-    Strategy 2 — global: text appearing on ≥70% of ALL pages is boilerplate.
-
-    Strategy 3 — page numbers: digit-only lines on ≥30% of pages are removed.
+    Intentionally lossy: used only for grouping/detection.
+    Original texts are kept and used for actual block removal.
     """
-    import re as _re
+    t = _NORM_NON_ALPHA.sub(" ", text.lower())
+    words = sorted(set(t.split()))
+    # Require at least 2 distinct words to avoid grouping single-token noise
+    if len(words) < 2:
+        return text.lower().strip()
+    return " ".join(words)
 
+
+def _filter_headers_footers(blocks: List[TextBlock], total_pages: int) -> List[TextBlock]:
+    """
+    Remove headers, footers, and page numbers detected purely from structure
+    (position + frequency across pages) — works for any document type.
+
+    Strategy A — POSITIONAL CLUSTERING:
+        Text that appears in the top 12% or bottom 12% of the page on ≥35% of
+        pages, with y-position variation (stdev) < 3% of page height → header/footer.
+        Only the instances physically in the zone are removed; if the same text
+        also appears in the body (e.g. a case number cited inline), those
+        body instances are preserved.
+
+    Strategy B — GLOBAL REPETITION:
+        Text that appears on ≥70% of all pages regardless of position → boilerplate.
+        All instances removed.
+
+    Strategy C — PAGE NUMBERS:
+        Lines containing only digits/punctuation in the top/bottom 15%, present
+        on ≥25% of pages → navigation artifact, removed.
+    """
     if total_pages < 3:
         return blocks
 
-    positional_counts: defaultdict = defaultdict(int)
-    global_counts: defaultdict = defaultdict(int)
-
-    for block in blocks:
-        if block.is_table or not block.text:
+    # Group blocks by their NORMALISED text key so that minor variants of the
+    # same repeated element (punctuation, numbers, spacing) are counted together.
+    norm_groups: defaultdict = defaultdict(list)
+    for b in blocks:
+        if b.is_table or not b.text:
             continue
-        text = block.text.strip()
-        if not text:
+        norm_groups[_norm_key(b.text.strip())].append(b)
+
+    # Minimum absolute page count to avoid false positives on short documents
+    min_occ = max(2, int(total_pages * _POSITIONAL_FREQ))
+
+    # Block ids to drop
+    drop_ids: set = set()
+
+    for nkey, blks in norm_groups.items():
+        pages_seen = {b.page for b in blks}
+        n_pages = len(pages_seen)
+        freq = n_pages / total_pages
+        y_tops = [b.y_top for b in blks]
+        avg_y = _mean(y_tops)
+
+        # B — Global repetition: same (normalised) content on ≥70% of pages
+        if freq >= _GLOBAL_FREQ:
+            for b in blks:
+                drop_ids.add(id(b))
             continue
 
-        global_counts[text] += 1
+        # A — Positional clustering: consistent header/footer zone + tight y-spread
+        if freq >= _POSITIONAL_FREQ and n_pages >= min_occ:
+            if avg_y < _HEADER_ZONE or avg_y > _FOOTER_ZONE:
+                y_std = _stdev(y_tops) if len(y_tops) > 1 else 0.0
+                if y_std < _POSITIONAL_STD:
+                    # Only remove block instances physically inside the zone;
+                    # body-text occurrences of the same text are preserved.
+                    for b in blks:
+                        if b.y_top < _HEADER_ZONE or b.y_top > _FOOTER_ZONE:
+                            drop_ids.add(id(b))
+                    continue
 
-        if block.y_top <= 0.20 or block.y_bottom >= 0.80:
-            positional_counts[text] += 1
+        # C — Page numbers in header/footer zone
+        if freq >= _PAGENUM_FREQ and n_pages >= 2:
+            if avg_y < _PAGENUM_ZONE or avg_y > (1.0 - _PAGENUM_ZONE):
+                if any(_PAGE_NUM_PAT.fullmatch(b.text.strip()) for b in blks):
+                    for b in blks:
+                        drop_ids.add(id(b))
 
-    repetitive: set = set()
-
-    for text, count in positional_counts.items():
-        if count / total_pages >= 0.40:
-            repetitive.add(text)
-
-    for text, count in global_counts.items():
-        if count / total_pages >= 0.70:
-            repetitive.add(text)
-        if _re.fullmatch(r"[\d\s\-/|.]+", text) and count / total_pages >= 0.30:
-            repetitive.add(text)
-
-    return [
-        b for b in blocks
-        if b.is_table or b.text.strip() not in repetitive
-    ]
+    return [b for b in blocks if b.is_table or id(b) not in drop_ids]
