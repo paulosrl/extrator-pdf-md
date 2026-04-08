@@ -673,7 +673,7 @@ function showResult(data) {
   document.getElementById('stat-tokens-orig').textContent = fmt(data.tokens_original);
   document.getElementById('stat-tokens-out').textContent = fmt(data.tokens_output);
 
-  const hasRaw = data.has_raw_md === true || !!data.raw_output_path;
+  const hasRaw = !!data.has_raw_md;
   const tokOrig = data.tokens_original || 1;
 
   if (hasRaw && data.tokens_raw_output != null) {
@@ -731,7 +731,7 @@ function showResult(data) {
       fmt(data.blocks_kept) + ' / ' + fmt(data.blocks_total);
     document.getElementById('stat-blocks-card').style.display = '';
   }
-  if (data.has_rawtext || data.rawtext_path) {
+  if (data.has_rawtext) {
     document.getElementById('btn-compare').style.display = '';
   }
 
@@ -860,20 +860,20 @@ async function loadHistory() {
       let redLocalPct = '—';
       if (job.tokens_raw_output != null && job.tokens_original) {
         redLocalPct = ((1 - job.tokens_raw_output / tokOrig) * 100).toFixed(1) + '%';
-      } else if (!job.raw_output_path && job.reduction_pct != null) {
+      } else if (!job.has_raw_md && job.reduction_pct != null) {
         redLocalPct = job.reduction_pct.toFixed(1) + '%';
       }
       const dlLocalLink = job.status === 'done'
-        ? ` <a class="dl-link" href="#" onclick="dlJob('${job.id}', !!${!!job.raw_output_path});return false">(baixar)</a>`
+        ? ` <a class="dl-link" href="#" onclick="dlJob('${job.id}', ${!!job.has_raw_md});return false">(baixar)</a>`
         : '';
       const redLocal = redLocalPct + dlLocalLink;
 
       // Redução com IA (com link inline se disponível)
       let redAIPct = '—';
-      if (job.raw_output_path && job.reduction_pct != null) {
+      if (job.has_raw_md && job.reduction_pct != null) {
         redAIPct = job.reduction_pct.toFixed(1) + '%';
       }
-      const dlAILink = (job.status === 'done' && job.raw_output_path)
+      const dlAILink = (job.status === 'done' && job.has_raw_md)
         ? ` <a class="dl-link ai" href="#" onclick="dlJob('${job.id}', false);return false">(baixar)</a>`
         : '';
       const redAI = redAIPct === '—' ? '—' : redAIPct + dlAILink;
