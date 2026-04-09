@@ -66,9 +66,11 @@ extrator-pdf-md/
 - `backend/app/workers/tasks.py` — orquestra todo o pipeline de processamento; ponto central da lógica de negócio
 - `backend/app/workers/pipeline/extractor.py` — coração do sistema: extração, detecção de boilerplate, x_tolerance adaptativo, heading detection por ratio de font size
 - `backend/app/workers/pipeline/markdown_builder.py` — converte blocos extraídos em Markdown válido, com validação de headings e correção de artefatos OCR
-- `backend/app/workers/pipeline/llm_refine.py` — integração com OpenAI, chunking para documentos grandes, system prompt especializado em documentos jurídicos
+- `backend/app/workers/pipeline/llm_refine.py` — integração com OpenAI/Azure, chunking para documentos grandes, system prompt especializado em documentos jurídicos
 - `backend/app/models/job.py` — modelo central `ProcessingJob` com todos os campos de métricas
 - `backend/app/config.py` — todas as variáveis de configuração em um único lugar
+- `backend/app/services/storage.py` — salva e recupera arquivos em `STORAGE_PATH`; compartilhado entre backend e worker
+- `backend/app/services/progress.py` — publica eventos no Redis; consumido pelo WebSocket para atualização em tempo real
 - `docker-compose.yml` — topologia completa dos serviços e dependências de inicialização
 
 ## Comandos do dia a dia
@@ -163,12 +165,11 @@ docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
 - **Nunca alterar os padrões de boilerplate** em `extractor.py` sem testar com documentos PJe e da Polícia Civil do Pará — são altamente específicos e frágeis
 - **Baseline de tokens** é calculado com o texto bruto do pdfplumber (inclui boilerplate) + OCR das páginas escaneadas, não só o Markdown gerado — isso garante que a métrica de redução reflita o benefício real da ferramenta
 - **`reduction_pct`** é clamped em `[-9999.99, 9999.99]` para caber no campo `NUMERIC(7,2)` — PDFs quase vazios podem gerar valores extremos
-- **`use_llm`** é definido no momento do upload; não pode ser alterado após o job ser criado
+- **`use_llm` e `llm_model`** são definidos no momento do upload; não podem ser alterados após o job ser criado. `llm_model` aceita: `"openai"` (padrão), `"azure-gpt-4.1"`, `"azure-gpt-5"`
 - **Autenticação:** todos os endpoints (exceto `/auth/register`, `/auth/login`, `/health`, `/`) exigem JWT válido
 - **Isolamento de jobs por usuário:** queries de jobs sempre filtram por `user_id` — um usuário não acessa jobs de outro
 
 ## Débito técnico identificado
-- Nenhum TODO/FIXME/HACK encontrado no código
 - **Sem testes automatizados** — nenhum arquivo de teste existe no projeto
 - **Sem CI/CD** — nenhum workflow GitHub Actions ou equivalente
 - **CORS aberto** (`allow_origins=["*"]`) em `main.py` — aceitável para desenvolvimento, deve ser restrito em produção
