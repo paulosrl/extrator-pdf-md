@@ -4,9 +4,11 @@ Converte PDFs em Markdown limpo e otimizado para LLMs. Remove cabeçalhos, rodap
 
 ## Requisitos
 
-- [Docker](https://docs.docker.com/get-docker/) >= 24
-- [Docker Compose](https://docs.docker.com/compose/install/) >= 2.20
+- [Docker Engine](https://docs.docker.com/engine/install/) >= 24
+- **Docker Compose v2** (plugin `docker compose`, não o antigo `docker-compose`)
 - (Opcional) Chave de API da OpenAI para refinamento com IA
+
+> **Importante:** O projeto requer Docker Compose **v2** (comando `docker compose`, com espaço). A versão legada v1 (`docker-compose`, com hífen, pacote Python) é incompatível com Docker Engine >= 25 e causará erros como `KeyError: 'ContainerConfig'`. Veja a seção [Solução de problemas](#solução-de-problemas) se encontrar esse erro.
 
 ## Estrutura
 
@@ -30,15 +32,49 @@ extrator-pdf-md/
     └── index.html
 ```
 
-## Configuração
+## Configuração inicial (primeira vez em uma máquina nova)
 
-### 1. Copiar o arquivo de variáveis de ambiente
+### 1. Instalar o Docker corretamente
+
+Siga o guia oficial para o seu sistema operacional:
+
+- **Linux (Ubuntu/Debian):** https://docs.docker.com/engine/install/ubuntu/
+- **macOS:** instale o [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- **Windows (WSL2):** instale o [Docker Desktop](https://www.docker.com/products/docker-desktop/) com integração WSL2 habilitada
+
+Após instalar, **verifique que o Compose v2 está disponível:**
+
+```bash
+docker compose version
+# Deve retornar: Docker Compose version v2.x.x
+```
+
+Se o comando acima falhar (ou retornar v1.x), veja [Instalar Docker Compose v2](#instalar-docker-compose-v2).
+
+### 2. Corrigir permissões do Docker (Linux/WSL2)
+
+No Linux, o socket do Docker pertence ao grupo `docker`. Sem isso, qualquer comando `docker` falha com `Permission denied`.
+
+```bash
+# Adicionar seu usuário ao grupo docker (executar uma única vez)
+sudo usermod -aG docker $USER
+
+# Aplicar sem precisar fazer logout
+newgrp docker
+
+# Verificar se funcionou
+docker info
+```
+
+> Em WSL2, após rodar `newgrp docker`, pode ser necessário fechar e reabrir o terminal.
+
+### 3. Copiar o arquivo de variáveis de ambiente
 
 ```bash
 cp .env.example .env
 ```
 
-### 2. Editar o `.env`
+### 4. Editar o `.env`
 
 Abra o `.env` e ajuste os valores conforme necessário:
 
@@ -76,8 +112,10 @@ OPENAI_API_KEY=
 ## Subir o projeto
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
+
+> **Atenção:** use `docker compose` (com espaço), não `docker-compose` (com hífen).
 
 Isso irá:
 1. Iniciar o PostgreSQL e o Redis
@@ -159,10 +197,10 @@ Markdown salvo + métricas no banco
 
 ```bash
 # Parar mantendo os dados
-docker-compose down
+docker compose down
 
 # Parar e remover volumes (apaga banco e arquivos processados)
-docker-compose down -v
+docker compose down -v
 ```
 
 ## Reconstruir após mudanças no código
@@ -172,36 +210,116 @@ O volume `./backend:/app_src` está montado com reload ativo no backend. Mudanç
 Para mudanças no `requirements.txt` ou no `Dockerfile`:
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 ## Logs
 
 ```bash
 # Todos os serviços
-docker-compose logs -f
+docker compose logs -f
 
 # Apenas o worker Celery
-docker-compose logs -f worker
+docker compose logs -f worker
 
 # Apenas o backend
-docker-compose logs -f backend
+docker compose logs -f backend
 ```
 
 ## Solução de problemas
 
-**Erro `OPENAI_API_KEY não configurada` ao tentar usar refinamento IA**
-Adicione a chave no `.env`: `OPENAI_API_KEY=sk-...` e reinicie com `docker-compose up`.
+### `Permission denied` ao rodar qualquer comando docker
 
-**Banco não inicializado / erro de migration**
+**Sintoma:** `PermissionError(13, 'Permission denied')` ao tentar conectar ao socket Docker.
+
+**Causa:** Seu usuário não pertence ao grupo `docker`.
+
+**Solução:**
 ```bash
-docker-compose run --rm migrate alembic upgrade head
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
-**Arquivo PDF recusado**
+Se persistir após isso (comum em WSL2), aplique temporariamente:
+```bash
+sudo chmod 666 /var/run/docker.sock
+```
+
+> Esse `chmod` é temporário — volta ao normal após reiniciar o sistema. A solução permanente é o `usermod` acima.
+
+---
+
+### `KeyError: 'ContainerConfig'` ao subir containers
+
+**Sintoma:** Erro como `container.image_config['ContainerConfig']` ao rodar `docker-compose up`.
+
+**Causa:** Você está usando o `docker-compose` legado (v1, pacote Python) com Docker Engine >= 25. Eles são incompatíveis.
+
+**Solução:** Instale o Docker Compose v2 e use `docker compose` (com espaço):
+
+```bash
+# Verificar versão atual
+docker compose version   # deve retornar v2.x.x
+
+# Se não funcionar, instalar o plugin
+sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+```
+
+Se não puder instalar o plugin, o contorno é remover os containers existentes antes de subir:
+```bash
+docker rm -f $(docker ps -aq --filter "name=extrator-pdf-md") 2>/dev/null || true
+docker-compose up --build
+```
+
+---
+
+### Instalar Docker Compose v2
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y docker-compose-plugin
+docker compose version
+```
+
+**Alternativa (qualquer Linux):**
+```bash
+DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+mkdir -p $DOCKER_CONFIG/cli-plugins
+curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+  -o $DOCKER_CONFIG/cli-plugins/docker-compose
+chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+docker compose version
+```
+
+---
+
+### Erro `OPENAI_API_KEY não configurada` ao usar refinamento IA
+
+Adicione a chave no `.env`:
+```
+OPENAI_API_KEY=sk-...
+```
+Reinicie com `docker compose up`.
+
+---
+
+### Banco não inicializado / erro de migration
+
+```bash
+docker compose run --rm migrate alembic upgrade head
+```
+
+---
+
+### Arquivo PDF recusado
+
 - Tamanho máximo: 200 MB (configurável via `MAX_FILE_SIZE_MB` no `.env`)
 - Páginas máximas: 1000 (configurável via `MAX_PAGES` no `.env`)
 - O arquivo deve ter extensão `.pdf`
 
-**WebSocket desconectando durante processamento longo**
+---
+
+### WebSocket desconectando durante processamento longo
+
 O timeout do WebSocket é de 5 minutos. PDFs muito grandes com OCR + refinamento IA podem ultrapassar esse limite. Atualize a página — o job continua em background e o resultado estará disponível no histórico.
