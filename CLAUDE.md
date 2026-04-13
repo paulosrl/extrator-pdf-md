@@ -76,27 +76,27 @@ extrator-pdf-md/
 ## Comandos do dia a dia
 ```bash
 # Subir tudo (primeira vez ou após mudar requirements.txt/Dockerfile)
-docker-compose up --build
+docker compose up --build
 
 # Subir sem rebuild (mudanças só em .py — reload automático)
-docker-compose up
+docker compose up
 
 # Derrubar mantendo dados
-docker-compose down
+docker compose down
 
 # Derrubar e apagar banco + arquivos processados
-docker-compose down -v
+docker compose down -v
 
 # Ver logs em tempo real
-docker-compose logs -f
-docker-compose logs -f worker   # só o Celery
-docker-compose logs -f backend  # só o FastAPI
+docker compose logs -f
+docker compose logs -f worker   # só o Celery
+docker compose logs -f backend  # só o FastAPI
 
 # Rodar migration manualmente (se necessário)
-docker-compose run --rm migrate alembic upgrade head
+docker compose run --rm migrate alembic upgrade head
 
 # Criar nova migration
-docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
+docker compose run --rm migrate alembic revision --autogenerate -m "descricao"
 ```
 
 ## Variáveis de ambiente necessárias
@@ -179,6 +179,6 @@ docker-compose run --rm migrate alembic revision --autogenerate -m "descricao"
 - Não usar `alembic autogenerate` sem revisar o diff — os tipos PostgreSQL customizados (UUID, Enum `jobstatus`) podem gerar migrations incorretas
 - Não alterar os padrões regex de boilerplate em `extractor.py` sem conjunto de testes com PDFs reais
 - Não mover a lógica de extração para async — o worker Celery usa sessão síncrona (psycopg2) intencionalmente
-- Não adicionar dependências ao `requirements.txt` sem reconstruir a imagem Docker (`docker-compose up --build`)
+- Não adicionar dependências ao `requirements.txt` sem reconstruir a imagem Docker (`docker compose up --build`)
 - Não armazenar arquivos fora de `STORAGE_PATH` — o volume `pdf_data` é compartilhado entre `backend` e `worker`
 - Não trocar o modelo OpenAI sem avaliar o system prompt — ele foi calibrado especificamente para `gpt-4.1-mini` e documentos jurídicos brasileiros

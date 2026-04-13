@@ -261,8 +261,8 @@ sudo chmod 666 /var/run/docker.sock
 # Verificar versão atual
 docker compose version   # deve retornar v2.x.x
 
-# Se não funcionar, instalar o plugin
-sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+# Se não funcionar, instalar o plugin (no Ubuntu 24.04 o nome mudou para docker-compose-v2)
+sudo apt-get update && sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose-v2
 ```
 
 Se não puder instalar o plugin, o contorno é remover os containers existentes antes de subir:
@@ -279,6 +279,8 @@ docker-compose up --build
 ```bash
 sudo apt-get update
 sudo apt-get install -y docker-compose-plugin
+# Nota: Se estiver no Ubuntu 24.04 (Noble) ou mais recente, use o novo nome do pacote:
+sudo apt-get install -y docker-compose-v2
 docker compose version
 ```
 
