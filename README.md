@@ -117,13 +117,16 @@ docker compose up --build
 
 > **Atenção:** use `docker compose` (com espaço), não `docker-compose` (com hífen).
 
-Isso irá:
-1. Iniciar o PostgreSQL e o Redis
-2. Executar as migrations do banco (`alembic upgrade head`)
-3. Subir o servidor FastAPI na porta **8000**
-4. Subir o worker Celery (2 concorrências)
+Isso vai inicializar a orquestração completa. A arquitetura é dividida nos seguintes containers:
 
-Na primeira execução o build pode levar alguns minutos (instala Tesseract OCR, Poppler e dependências Python).
+### Papel de cada Container:
+- 🐘 **`postgres`**: Banco de dados relacional. Armazena usuários, histórico de processos, métricas de tokens e onde os dados são persistidos.
+- 🟥 **`redis`**: Banco de dados em memória super rápido atuando como "mensageiro" (message broker) para as filas do Celery administrar tarefas.
+- 🛠️ **`migrate`**: Container pontual focado apenas em atualizar a estrutura do banco de dados (Alembic). Ele roda, constrói as tabelas necessárias e **se desliga** automaticamente (`code 0`).
+- ⚡ **`backend`**: Servidor da API ([FastAPI](https://fastapi.tiangolo.com/)). É quem hospeda as rotas de acesso, valida tokens (JWT), serve o site visual (`index.html`) e coordena o recebimento dos arquivos PDF. 
+- ⚙️ **`worker`**: Operário focado no trabalho pesado ([Celery](https://docs.celeryq.dev/)). Fica escutando as tarefas longas em segundo plano, como ler páginas do PDF, rodar IA e extrair OCR, liberando a API para não travar.
+
+> **Tempo de build:** Na primeira execução, o build de criação do `backend` e `worker` pode levar mais de alguns minutos pois requer instalação dos pacotes grossos do Tesseract OCR, Poppler, etc.
 
 ## Acessar a aplicação
 
@@ -311,6 +314,12 @@ Reinicie com `docker compose up`.
 ```bash
 docker compose run --rm migrate alembic upgrade head
 ```
+
+---
+
+### Container "migrate" mostrando `exited - code 0`
+
+Isso **não é um erro**! É o comportamento **esperado e indica sucesso**. O container `migrate` funciona como uma tarefa pontual: ele liga, roda as migrações (cria/atualiza as tabelas do banco) e depois se encerra propositalmente, devolvendo o código de sucesso `0`. Apenas quando ele finaliza é que o `backend` e o `worker` sobem e continuam rodando continuamente.
 
 ---
 
