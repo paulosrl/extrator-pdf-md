@@ -1,65 +1,112 @@
 services:
+  # ========================================================================
+  # SERVIÇO: POSTGRES (Data Base)
+  # Objetivo: Banco de dados relacional que armazena os usuários, 
+  # histórico de extrações, métricas e estado dos jobs no sistema.
+  # ========================================================================
   postgres:
+    # Usa a versão oficial do PostgreSQL otimizada em Alpine Linux (mais leve)
     image: postgres:15-alpine
+    # Define as credenciais de acesso injetando as variáveis do arquivo .env. 
+    # Caso não exista no .env, usa o valor padrão após o `:-`
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-pdfcleaner}
     volumes:
+      # Mapeia o volume "pgdata" (da sua máquina) para dentro da pasta raiz do banco no container.
+      # Isso garante que você não perca os dados salvos quando reiniciar ou apagar o container.
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      # Um teste automático que o Docker faz para saber se o banco "está vivo e pronto".
+      # Chama o utilitário nativo pg_isready utilizando o usuário definido.
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}" ]
+      interval: 5s # De 5 em 5 segundos checa se acordou
+      timeout: 5s # Espera no máximo 5 segundos por uma resposta do teste
+      retries: 10 # Falha de vez caso falhe por 10 vezes seguidas
 
+  # ========================================================================
+  # SERVIÇO: REDIS (Message Broker e Cache)
+  # Objetivo: Trabalha em conjunto com o Celery atuando como o carteiro
+  # que recebe e entrega a fila de processamento em modo rápido na memória RAM.
+  # ========================================================================
   redis:
     image: redis:7-alpine
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Testa a vitalidade enviando um simples "ping" na linha de comando nativa
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # ========================================================================
+  # SERVIÇO: MIGRATE (Migrações e Construção de Estrutura)
+  # Objetivo: Container de escopo curto e pontual. Ele liga, usa a ferramenta
+  # Alembic para construir as tabelas do seu projeto no PostgreSQL e desliga sozinho (Code 0).
+  # ========================================================================
   migrate:
+    # O contexto diz onde o Docker deve procurar um arquivo `Dockerfile` para gerar a imagem.
     build:
       context: ./backend
+    # Especifica qual arquivo contém todas as varáveis de ambiente sensíveis
     env_file: .env
+    # Comando real que executa a aplicação das migrações do banco (upgrade para a versão final)
     command: alembic upgrade head
     depends_on:
       postgres:
+        # A migração SÓ COMEÇA se o healthcheck do PostgreSQL responder como saúdavel
         condition: service_healthy
     volumes:
+      # Monta pastas compartilhadas com acesso para gravação/leitura a arquivos na máquina
       - pdf_data:/data
       - ./backend:/app_src
+    # Define a pasta raiz padrão onde qualquer comando desse container vai rodar internamente
     working_dir: /app_src
 
+  # ========================================================================
+  # SERVIÇO: BACKEND (A API e WebServer Core)
+  # Objetivo: O cérebro da aplicação e a interface central construído em FastAPI.
+  # Ele serve as páginas web (`index.html`), autentica tokens e expõe a doc /docs.
+  # ========================================================================
   backend:
     build:
       context: ./backend
     env_file: .env
     ports:
+      # Redireciona tudo que bate na porta 8000 na sua máquina host (esquerda) para a 8000 dentro do container (direita)
       - "8000:8000"
+    # Comando central de subida do servidor usando uvicorn. Note a flag --reload 
+    # atuando para que ao salvar arquivos o seu servidor recarregue sozinho.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
+      # Este container depende que Banco, Cache e Migrações estejam perfeitos de subir
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
+        # O backend não tem sua autorização sem que as migrações finalizem por completo.
         condition: service_completed_successfully
     volumes:
       - pdf_data:/data
+      # Espelha o código atual (dev-mode) sem precisar refazer o build a cada vírgula editada no python
       - ./backend:/app_src
-      - ./frontend:/frontend
+      - ./frontend:/frontend # Mantém visível os HTMLs e styles pro backend devolver
     working_dir: /app_src
 
+  # ========================================================================
+  # SERVIÇO: WORKER (Trabalhador de Backgound - Celery)
+  # Objetivo: Container pesado e parrudo focado em pegar as requisições geradas e
+  # fazer a parte bruta nos bastidores: o OCR, rodar a pipeline de IA, limpar páginas.
+  # ========================================================================
   worker:
     build:
       context: ./backend
     env_file: .env
+    # Inicializa o Celery. O --concurrency=2 avisa que ele fará até dois PDFs (ou requisições) ao mesmo tempo 
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2
     depends_on:
+      # Assim como o backend, requer 100% de sanidade nos containers auxiliares antes de começar
       postgres:
         condition: service_healthy
       redis:
@@ -67,10 +114,12 @@ services:
       migrate:
         condition: service_completed_successfully
     volumes:
+      # O trabalhador só precisa do backend script e da pasta onde ficam os PDFs guardados (pdf_data)
       - pdf_data:/data
       - ./backend:/app_src
     working_dir: /app_src
 
+# Declaração dos volumes globais do sistema de arquivos controlados inteiramente pelo Docker Engine
 volumes:
-  pgdata:
-  pdf_data:
+  pgdata: # Disco persistente utilizado como salvaguarda da HD do Postgres 
+  pdf_data: # Disco persistente que estoca arquivos estáticos de upload do PDF e conversão MD
