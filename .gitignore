@@ -377,3 +377,6 @@ __pycache__/
 node_modules/
 venv/
 .venv/
+
+# AI Assistants e Configs Locais
+.claude/
